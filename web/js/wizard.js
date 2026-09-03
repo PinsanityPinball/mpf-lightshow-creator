@@ -617,6 +617,7 @@ export class Wizard {
     ]));
     c.appendChild(field('Blend', selectBox(L.blend, [
       ['add', 'Add (lights stack)'], ['normal', 'Normal (covers)'],
+      ['average', 'Average (blends colours)'],
       ['erase', 'Erase (turns lights off)'],
     ], (v) => { L.blend = v; })));
     c.appendChild(hint(`Runs ${L.startMs} to `

@@ -461,6 +461,7 @@ export class Inspector {
     root.appendChild(section('Blend'));
     root.appendChild(field('Mode', selectBox(layer.blend, [
       ['add', 'Add (lights stack)'], ['normal', 'Normal (covers)'],
+      ['average', 'Average (blends colours)'],
       ['erase', 'Erase (turns lights off)'],
     ], (v) => edit('blend', () => { layer.blend = v; this.buildLayer(); }))));
     if (layer.blend === 'erase') {
@@ -468,6 +469,13 @@ export class Inspector {
         + 'that light off, so it only affects layers below it in the list. Use it '
         + 'to punch a moving hole in something, or to hold a group dark while the '
         + 'rest of the show runs.'));
+    }
+    if (layer.blend === 'average') {
+      root.appendChild(hint('Every averaging layer reaching a light is mixed into one colour '
+        + 'rather than added, so red over blue gives purple instead of magenta-white. '
+        + 'The result is scaled back up to the brightest layer that reached it, so '
+        + 'mixing does not dim the light. Averaging layers mix with each other; '
+        + 'anything on Add still stacks on top.'));
     }
   }
 
@@ -979,6 +987,7 @@ export class Inspector {
     root.appendChild(field('Mode', selectBox(layer.blend, [
       ['add', 'Add (stacks with other layers)'],
       ['normal', 'Normal (overrides what is under it)'],
+      ['average', 'Average (blends colours)'],
       ['erase', 'Erase (turns lights off)'],
     ], (v) => edit('blend', () => { layer.blend = v; this.buildLayer(); }))));
     if (layer.blend === 'erase') {
@@ -986,6 +995,13 @@ export class Inspector {
         + 'that light off, so it only affects layers below it in the list. Use it '
         + 'to punch a moving hole in something, or to hold a group dark while the '
         + 'rest of the show runs.'));
+    }
+    if (layer.blend === 'average') {
+      root.appendChild(hint('Every averaging layer reaching a light is mixed into one colour '
+        + 'rather than added, so red over blue gives purple instead of magenta-white. '
+        + 'The result is scaled back up to the brightest layer that reached it, so '
+        + 'mixing does not dim the light. Averaging layers mix with each other; '
+        + 'anything on Add still stacks on top.'));
     }
 
     root.appendChild(section('Timing'));
@@ -1065,6 +1081,7 @@ export class Inspector {
     root.appendChild(section('Playback'));
     root.appendChild(field('Blend', selectBox(layer.blend, [
       ['add', 'Add (stacks with other layers)'], ['normal', 'Normal (overrides)'],
+      ['average', 'Average (blends colours)'],
       ['erase', 'Erase (turns lights off)'],
     ], (v) => edit('blend', () => { layer.blend = v; this.buildLayer(); }))));
     if (layer.blend === 'erase') {
@@ -1072,6 +1089,13 @@ export class Inspector {
         + 'that light off, so it only affects layers below it in the list. Use it '
         + 'to punch a moving hole in something, or to hold a group dark while the '
         + 'rest of the show runs.'));
+    }
+    if (layer.blend === 'average') {
+      root.appendChild(hint('Every averaging layer reaching a light is mixed into one colour '
+        + 'rather than added, so red over blue gives purple instead of magenta-white. '
+        + 'The result is scaled back up to the brightest layer that reached it, so '
+        + 'mixing does not dim the light. Averaging layers mix with each other; '
+        + 'anything on Add still stacks on top.'));
     }
     root.appendChild(field('Start (ms)', numberInput(layer.startMs, 0, 600000, 1,
       (v) => edit('start', () => { layer.startMs = v; }))));

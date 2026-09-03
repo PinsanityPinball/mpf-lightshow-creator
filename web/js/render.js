@@ -183,6 +183,53 @@ export class ShowRenderer {
     if (!this.accum || this.accum.length !== n * 3) {
       this.accum = new Float32Array(n * 3);
       this.out = new Uint8ClampedArray(n * 3);
+      // Averaging layers cannot be folded into `accum` as they go: a mean needs
+      // to know how many layers reached each light, which is only true once
+      // every layer has had its turn. They collect here and resolve at the end.
+      this.avgSum = new Float32Array(n * 3);
+      this.avgCount = new Float32Array(n);
+      this.avgPeak = new Float32Array(n);
+    }
+  }
+
+  /** One averaging layer's contribution to a light, in linear light. */
+  addAverage(i, r, g, b) {
+    const k = i * 3;
+    this.avgSum[k] += r;
+    this.avgSum[k + 1] += g;
+    this.avgSum[k + 2] += b;
+    this.avgCount[i] += 1;
+    // the brightest single contributor sets the level the mean is scaled back
+    // up to, so averaging changes the colour without dimming the light
+    const m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    if (m > this.avgPeak[i]) this.avgPeak[i] = m;
+  }
+
+  /**
+   * Fold the averaging group into the main accumulator.
+   *
+   * Red and blue average to a half-bright purple, which on a playfield reads as
+   * "the light went dim" rather than "the light went purple". Rescaling the
+   * mean so its brightest channel matches the brightest contributor keeps the
+   * hue the average produced and the brightness the layers asked for.
+   */
+  resolveAverage(n) {
+    for (let i = 0; i < n; i++) {
+      const c = this.avgCount[i];
+      if (!c) continue;
+      const k = i * 3;
+      let r = this.avgSum[k] / c;
+      let g = this.avgSum[k + 1] / c;
+      let b = this.avgSum[k + 2] / c;
+      const m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      if (m > 0) {
+        const scale = this.avgPeak[i] / m;
+        r *= scale; g *= scale; b *= scale;
+      }
+      // the averaged group then stacks with everything that is not averaging
+      this.accum[k] += r;
+      this.accum[k + 1] += g;
+      this.accum[k + 2] += b;
     }
   }
 
@@ -199,6 +246,9 @@ export class ShowRenderer {
     this.resize(project.aspect);
     this.ensureBuffers(lights.length);
     this.accum.fill(0);
+    this.avgSum.fill(0);
+    this.avgCount.fill(0);
+    this.avgPeak.fill(0);
 
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -226,6 +276,8 @@ export class ShowRenderer {
       if (!st || st.alpha <= 0) continue;
       if (this.drawAndAccumulate(layer, st, lights, opts, toLin)) shapeLayers++;
     }
+
+    this.resolveAverage(lights.length);
 
     // linear (or plain) accumulation -> 8-bit sRGB, then the export post-process
     const gamma = opts.gamma && opts.gamma > 0 ? opts.gamma : 1;
@@ -295,7 +347,8 @@ export class ShowRenderer {
     const total = offsets.length / 2;
     const alphaScale = Math.max(0, Math.min(1, st.alpha));
     const erasing = layer.blend === 'erase';
-    const additive = !erasing && layer.blend !== 'normal';
+    const averaging = layer.blend === 'average';
+    const additive = !erasing && !averaging && layer.blend !== 'normal';
     const accum = this.accum;
 
     // Read a small tile around each light rather than the whole layer bounding
@@ -338,6 +391,9 @@ export class ShowRenderer {
         // only affects layers below it, since accumulation runs in layer order.
         const keep = 1 - cov;
         accum[j] *= keep; accum[j + 1] *= keep; accum[j + 2] *= keep;
+      } else if (averaging) {
+        this.addAverage(i, (sr / total) * alphaScale,
+                        (sg / total) * alphaScale, (sb / total) * alphaScale);
       } else if (additive) {
         // premultiplied average over the sample disc
         accum[j] += (sr / total) * alphaScale;
@@ -356,8 +412,11 @@ export class ShowRenderer {
     target.save();
     target.setTransform(1, 0, 0, 1, 0, 0);
     target.globalAlpha = alphaScale;
+    // The display canvas has no per-light accumulator to average into, so an
+    // averaging layer is drawn additively there. The sampled output - what
+    // actually reaches the machine - is the averaged result either way.
     target.globalCompositeOperation = erasing ? 'destination-out'
-      : (additive ? 'lighter' : 'source-over');
+      : ((additive || averaging) ? 'lighter' : 'source-over');
     target.drawImage(this.scratch, bx, by, bw, bh, bx, by, bw, bh);
     target.restore();
     return true;
@@ -432,7 +491,8 @@ export class ShowRenderer {
     const alphaScale = st ? Math.max(0, Math.min(1, st.alpha)) : 1;
     if (alphaScale <= 0) return false;
     const erasing = layer.blend === 'erase';
-    const additive = !erasing && layer.blend !== 'normal';
+    const averaging = layer.blend === 'average';
+    const additive = !erasing && !averaging && layer.blend !== 'normal';
     const accum = this.accum;
     const base = frame * resolved.stride;
 
@@ -450,6 +510,8 @@ export class ShowRenderer {
         const lum = Math.max(r, g, b);
         const keep = 1 - Math.max(0, Math.min(1, lum));
         accum[k] *= keep; accum[k + 1] *= keep; accum[k + 2] *= keep;
+      } else if (averaging) {
+        this.addAverage(j, r, g, b);
       } else if (additive) {
         accum[k] += r; accum[k + 1] += g; accum[k + 2] += b;
       } else {
@@ -492,7 +554,8 @@ export class ShowRenderer {
 
     const mask = layerMask(layer, lights);
     const erasing = layer.blend === 'erase';
-    const additive = !erasing && layer.blend !== 'normal';
+    const averaging = layer.blend === 'average';
+    const additive = !erasing && !averaging && layer.blend !== 'normal';
     const accum = this.accum;
 
     const put = (lightIndex, hex, gain) => {
@@ -507,6 +570,10 @@ export class ShowRenderer {
       const r = toLin[c.r] * alphaScale * gain;
       const g = toLin[c.g] * alphaScale * gain;
       const b = toLin[c.b] * alphaScale * gain;
+      if (averaging) {
+        this.addAverage(lightIndex, r, g, b);
+        return;
+      }
       if (additive) {
         accum[k] += r; accum[k + 1] += g; accum[k + 2] += b;
       } else {

@@ -28,8 +28,8 @@ shapes, a real timeline, light patterns and direct manipulation.
   turns, so a pie chart that fills is one layer
 - **Motion paths** — circle, infinity, spiral, zig-zag, bounce and more, applied
   in one click, plus transforms and randomisers
-- **Blend modes** — add, normal, or *erase*, which switches lights off wherever
-  a layer reaches
+- **Blend modes** — add, normal, *average* (mixes colours without dimming), or
+  *erase* (switches lights off wherever a layer reaches)
 - **Step-by-step wizard** with a live preview, or full manual control
 
 **Light patterns** — no shape, no sampling, exact colours straight to your lights
@@ -135,7 +135,15 @@ Only shape layers have geometry on the playfield. The other two contribute
 colours directly, so use the *Lights* or *Both* view to see them.
 
 Each layer has a **blend mode**: *Add* stacks it with everything else, *Normal*
-covers what is under it, and *Erase* turns lights **off** wherever it reaches.
+covers what is under it, *Average* mixes colours instead of summing them, and
+*Erase* turns lights **off** wherever it reaches.
+
+*Average* mixes every averaging layer reaching a light into one colour, then
+scales the result back up to the brightest layer that reached it — so mixing
+changes the hue without dimming the light. Red over yellow gives orange rather
+than yellow; red over white gives pink rather than white; two half-brightness
+reds stay half rather than doubling. Colours that share no channels (red and
+blue) come out the same as adding, since there is nothing to average away.
 An eraser lights nothing of its own — its colour is irrelevant, only its shape
 matters — and it affects only layers below it in the list, so you can punch a
 moving hole in a wash or hold one group dark while the rest of the show runs.
