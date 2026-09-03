@@ -9,8 +9,8 @@
 
 import { el, button, showModal, hideModal, api, status } from './ui.js';
 
-const ICON = { map: '◉', tags: '▤', yaml: '·' };
-const KIND_LABEL = { map: 'light map', tags: 'tags', yaml: 'yaml' };
+const ICON = { map: '◉', tags: '▤', both: '◈', yaml: '·' };
+const KIND_LABEL = { map: 'light map', tags: 'tags', both: 'map + tags', yaml: '' };
 
 /**
  * Open the browser. Resolves to an absolute file path, or null if cancelled.
@@ -37,8 +37,10 @@ export function pickFile(opts = {}) {
     useBtn.disabled = true;
 
     const HINT = {
-      map: 'Pick your monitor.yaml. It stays where it is - the app reads it in place.',
-      tags: 'Pick your lights.yaml. It stays where it is - the app reads it in place.',
+      map: 'Pick your monitor.yaml. It stays where it is - the app reads it in place. '
+        + 'Likely matches are highlighted, but any YAML can be chosen.',
+      tags: 'Pick your lights.yaml. It stays where it is - the app reads it in place. '
+        + 'Likely matches are highlighted, but any YAML can be chosen.',
       folder: 'Open the folder you want, then use it. Your MPF machine folder is '
         + 'the one containing config/ - shows go into its shows/ subfolder.',
       any: 'Pick a YAML file.',
@@ -105,8 +107,10 @@ export function pickFile(opts = {}) {
       }
 
       for (const f of (folderMode ? [] : data.files || [])) {
+        // a file carrying both positions and tags can serve either role
+        const suits = f.kind === kind || f.kind === 'both';
         const row = el('div', {
-          class: 'fb-row file' + (f.kind === kind ? ' match' : ''), title: f.path,
+          class: 'fb-row file' + (suits ? ' match' : ''), title: f.path,
         }, [
           el('span', { class: 'fb-icon', text: ICON[f.kind] || ICON.yaml }),
           el('span', { class: 'fb-name', text: f.name }),

@@ -216,7 +216,15 @@ finds, since a machine's `lights.yaml` and a `monitor.yaml` both open with a
 light block: the one with per-light `x`/`y` is the *light map*, the one with
 `tags:` is the *tags* file.
 
-The browser is read-only and lists only folders and `.yaml`/`.yml` files.
+The browser is read-only and lists only folders and `.yaml`/`.yml` files. It
+lists **every** YAML in a folder and highlights the likely matches rather than
+hiding the rest — your files are yours to choose, and the sniffer does not
+always guess right.
+
+Some machines keep positions and tags in one file: a `lights.yaml` with per-light
+`x`/`y` *and* `tags:` is labelled **map + tags** and can be picked for either
+slot. Choosing it as the light map pairs it with itself for tags, so one file
+does both jobs.
 Tags split on commas *and* whitespace, so a missing comma (`tags: all, 5x 4x`)
 still yields separate tags instead of one unusable compound.
 

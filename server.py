@@ -511,10 +511,19 @@ def looks_like_lightmap(path):
 
 
 def sniff_kind(path):
-    """Label a YAML for the file browser: 'map', 'tags' or plain 'yaml'."""
-    if looks_like_lightmap(path):
+    """Label a YAML for the file browser.
+
+    'both' matters: a machine's lights.yaml often carries per-light x/y as well
+    as tags, so one file serves as light map and tag file at once. Reporting
+    that as merely a 'map' made it invisible in the tag picker.
+    """
+    is_map = looks_like_lightmap(path)
+    is_tags = looks_like_tagfile(path)
+    if is_map and is_tags:
+        return "both"
+    if is_map:
         return "map"
-    if looks_like_tagfile(path):
+    if is_tags:
         return "tags"
     return "yaml"
 
@@ -803,9 +812,12 @@ class Handler(SimpleHTTPRequestHandler):
                     if sniffed < 80:
                         sniffed += 1
                         kind = sniff_kind(full)
-                    if want == "any" or kind in ("yaml", want):
-                        files.append({"name": name, "path": full, "kind": kind,
-                                      "mtime": int(os.path.getmtime(full) * 1000)})
+                    # Every YAML is listed. Filtering by kind hid files whose
+                    # contents did not match what the sniffer expected - the
+                    # picker highlights likely matches instead of deciding for
+                    # you which of your own files you are allowed to choose.
+                    files.append({"name": name, "path": full, "kind": kind,
+                                  "mtime": int(os.path.getmtime(full) * 1000)})
             except OSError:
                 continue   # a permission wall mid-listing is not fatal
 
