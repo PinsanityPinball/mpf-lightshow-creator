@@ -229,6 +229,12 @@ through three of those lights nearly the same lights every slot.
 complete fill for Stack, one pass for Chase, whole passes for Wave. Resize the
 clip and the pattern stretches with it.
 
+**Easing** shapes how a pattern moves through its run, not just its brightness —
+ease-in-out makes a stack start and finish gently and a scanner swing like a
+pendulum. **Reverse** means whatever reversing that pattern means: a stack
+empties instead of filling, a spread goes dark, a wave travels the other way, a
+sweep fires its groups last to first. The checkbox says which.
+
 **Sparkle, Rain and Fire are random but repeatable.** They run off a seeded
 generator, so the preview matches the export and exporting twice gives
 byte-identical files. Change the **Seed** for a different arrangement.

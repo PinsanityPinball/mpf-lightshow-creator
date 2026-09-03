@@ -1277,7 +1277,7 @@ class App {
   }
 
   presetContext() {
-    return { lights: this.lights, tags: this.tags };
+    return { lights: this.lights, tags: this.tags, aspect: this.project.aspect || 0.5 };
   }
 
   presetDialog() {
@@ -1314,7 +1314,7 @@ class App {
       const grid = el('div', { class: 'shape-grid' });
       grid.style.gridTemplateColumns = 'repeat(5, 1fr)';
       for (const p of items) {
-        const sample = p.build('#8fd8ff');
+        const sample = p.build('#8fd8ff', this.presetContext());
         const icon = p.pattern
           ? patternThumb(sample.pattern)
           : shapeThumb(sample.shapeId, sample.shapeParams);

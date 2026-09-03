@@ -3,6 +3,7 @@
 
 import { makeLayer, makeKey, makePatternLayer } from './project.js';
 import { shapeDefaults } from './shapes.js';
+import { PATHS, applyPath, pathOptions } from './paths.js';
 
 const S = (id, over) => Object.assign(shapeDefaults(id), over || {});
 
@@ -41,7 +42,55 @@ export function suggestSweepTags(ctx) {
   return out;
 }
 
-export const GROUP_ORDER = ['Patterns', 'Wipes', 'Radial', 'Flashes'];
+/**
+ * One preset per pre-made path.
+ *
+ * The paths existed only inside a layer you had already made - you had to add
+ * something, find the Path tab and pick one. As presets they are a single click
+ * from the same place as everything else.
+ */
+const PATH_PRESET_DEFAULTS = {
+  circle: { r: 0.34 },
+  infinity: { r: 0.34 },
+  spiral: { r: 0.42, turns: 3 },
+  zigzag: { r: 0.34, turns: 4 },
+  diagonal: {},
+  sides: { r: 0.36 },
+  bounce: { r: 0.3, turns: 3 },
+  'sweep-up': {},
+};
+
+function pathPreset(def) {
+  return {
+    id: 'path-' + def.id,
+    name: def.label,
+    group: 'Paths',
+    build: (c, ctx) => {
+      const aspect = (ctx && ctx.aspect) || 0.5;
+      const layer = makeLayer({
+        name: def.label,
+        shapeId: 'halo',
+        shapeParams: S('halo', { feather: 0.55 }),
+        durationMs: 2000,
+        keys: [
+          makeKey(0, { x: 0.5, y: 0.5, sx: 0.34, sy: 0.34, color: c, ease: 'linear' }),
+          makeKey(1, { x: 0.5, y: 0.5, sx: 0.34, sy: 0.34, color: c }),
+        ],
+      });
+      applyPath(layer, def.id, Object.assign(
+        pathOptions({ aspect }),
+        PATH_PRESET_DEFAULTS[def.id] || {},
+        { aspect, points: def.id === 'diagonal' || def.id === 'sweep-up' ? 2
+          : (def.id === 'sides' ? 4 : 24) },
+      ));
+      return layer;
+    },
+  };
+}
+
+export const PATH_PRESETS = PATHS.filter((p) => p.id !== 'none').map(pathPreset);
+
+export const GROUP_ORDER = ['Patterns', 'Paths', 'Wipes', 'Radial', 'Flashes'];
 
 export const PRESETS = [
   {
@@ -230,8 +279,12 @@ export const PRESETS = [
     pattern: true,
     build: (c) => makePatternLayer({
       name: 'Wave', durationMs: 4000,
-      pattern: { type: 'wavy', color: c, axis: 'y', wavelength: 0.5,
-                 periodMs: 1200, floorLevel: 0, sharpness: 2 },
+      // radial and a lifted floor, matching makePattern's defaults - the preset
+      // used to hardcode axis 'y' and floorLevel 0, so the "out from the
+      // centre" default never applied to the way people actually add a Wave,
+      // and a trough colour was invisible because the trough was black
+      pattern: { type: 'wavy', color: c, axis: 'radial', wavelength: 0.5,
+                 periodMs: 1200, floorLevel: 0.25, sharpness: 2 },
     }),
   },
 
@@ -436,6 +489,8 @@ export const PRESETS = [
   },
 
 ];
+
+PRESETS.push(...PATH_PRESETS);
 
 function rotateHue(hex, deg) {
   const h = hex.replace('#', '');

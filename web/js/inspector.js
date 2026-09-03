@@ -997,6 +997,26 @@ export class Inspector {
           + 'finish early and hold, or be cut off mid-cycle.'));
     }
 
+    this.reverseRow(root, layer, edit);
+
+    // Pattern layers had no easing control anywhere - not on this panel, and
+    // patterns are not offered in the wizard - so the curve could only be set
+    // per keyframe on the Keyframe tab, where it did nothing to the pattern
+    // anyway. It shapes the pattern's own progress now.
+    const EASY_PATTERNS = ['stack', 'contagion', 'sweep', 'chase', 'scanner',
+      'rain', 'comet', 'pinwheel', 'wavy', 'interference'];
+    if (EASY_PATTERNS.includes(p.type)) {
+      const cur = (layer.keys[0] && layer.keys[0].ease) || 'linear';
+      root.appendChild(field('Easing', selectBox(cur, EASE_NAMES, (v) => edit('easing', () => {
+        for (const k of layer.keys) k.ease = v;
+        this.buildLayer();
+      }))));
+      root.appendChild(hint(cur === 'linear'
+        ? 'Shapes how the pattern moves through its run - ease-in-out makes a stack '
+          + 'start and finish gently, a scanner swing like a pendulum.'
+        : `Running on ${cur}. Set it back to linear for a constant rate.`));
+    }
+
     if (p.type !== 'sparkle') {
       root.appendChild(field('Colour', colorInput(p.color,
         this.live(`${layer.id}:pcolor`, 'colour', (v) => { p.color = v; app.rebuildHeads(); }))));
@@ -1115,12 +1135,6 @@ export class Inspector {
         ['name', 'Light name'], ['x', 'Left to right'], ['y', 'Top to bottom'],
         ['angle', 'Around the centre'],
       ], (v) => edit('marquee order', () => { p.order = v; this.buildLayer(); }))));
-      root.appendChild(el('div', { class: 'btn-row' }, [
-        checkbox('Reverse direction', !!p.reverse, (v) => edit('marquee direction', () => {
-          p.reverse = v;
-          this.buildLayer();
-        })),
-      ]));
       root.appendChild(field('When off', selectBox(p.offMode, [
         ['dark', 'Dark'], ['colour', 'Another colour'],
       ], (v) => edit('off mode', () => { p.offMode = v; this.buildLayer(); }))));
@@ -1162,12 +1176,6 @@ export class Inspector {
         }))));
       root.appendChild(slider('Arm width', p.armWidth, { min: 0.05, max: 1, step: 0.01 },
         this.live(`${layer.id}:paw`, 'arm width', (v) => { p.armWidth = v; })));
-      root.appendChild(el('div', { class: 'btn-row' }, [
-        checkbox('Spin the other way', !!p.reverse, (v) => edit('spin direction', () => {
-          p.reverse = v;
-          this.buildLayer();
-        })),
-      ]));
       root.appendChild(hint('Works off the angle of each light around the centre, so the '
         + 'arms stay even however the lights are scattered.'));
     }
@@ -1188,10 +1196,6 @@ export class Inspector {
       root.appendChild(el('div', { class: 'btn-row' }, [
         checkbox('Bounce back', p.bounce !== false, (v) => edit('bounce', () => {
           p.bounce = v;
-          this.buildLayer();
-        })),
-        checkbox('Start the other way', !!p.reverse, (v) => edit('scan direction', () => {
-          p.reverse = v;
           this.buildLayer();
         })),
       ]));
@@ -1525,6 +1529,43 @@ export class Inspector {
       : 'No lights selected yet. Pick some tags on the Lights tab.'));
     root.appendChild(hint('Pattern layers draw nothing on the playfield, so switch the '
       + 'view to Lights or Both to see them.'));
+  }
+
+  /**
+   * The reverse switch, labelled for the pattern it belongs to.
+   *
+   * Every one of these means something different - a stack empties, a spread
+   * goes dark, a wave travels the other way - so a bare "Reverse" would leave
+   * you to find out by trying it.
+   */
+  reverseRow(root, layer, edit) {
+    const p = layer.pattern;
+    const LABELS = {
+      stack: ['Empty instead of fill',
+        'Starts full and drains, with each piece travelling back out the way it came in.'],
+      contagion: ['Go dark instead of light',
+        'Starts fully lit and goes dark from the last lights the spread reached, '
+        + 'back towards where it started.'],
+      wavy: ['Travel the other way', 'Sends the wave inward instead of outward, '
+        + 'or down instead of up.'],
+      interference: ['Travel the other way', 'Sends the beat the other direction.'],
+      sweep: ['Reverse the order', 'Fires the groups last to first.'],
+      rain: ['Rise instead of fall', 'Drops travel upward, trails hanging below them.'],
+      chase: ['Run the other way', 'Steps through the lights in the opposite order.'],
+      marquee: ['Reverse direction', 'Steps the lit set the other way along the order.'],
+      pinwheel: ['Spin the other way', ''],
+      scanner: ['Start the other way', ''],
+    };
+    const entry = LABELS[p.type];
+    if (!entry) return;
+    const [label, why] = entry;
+    root.appendChild(el('div', { class: 'btn-row' }, [
+      checkbox(label, !!p.reverse, (v) => edit('reverse', () => {
+        p.reverse = v;
+        this.buildLayer();
+      })),
+    ]));
+    if (why && p.reverse) root.appendChild(hint(why));
   }
 
   /** Editable colour list for the sparkle palette. */

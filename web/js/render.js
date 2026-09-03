@@ -12,6 +12,7 @@ import { SHAPE_BY_ID, shapeExtent } from './shapes.js';
 import {
   layerStateAtTime, resolveShow, showFrameAt, mapShowToLights,
   orderedTargets, patternTimeAt, patternTimesAt, targetBounds, mulberry32, hashString,
+  EASES,
   effectiveParams, hexToRgb, rgbToHex,
   layerInstancesAtTime, stateAtLocal,
 } from './project.js';
@@ -731,6 +732,29 @@ export class ShowRenderer {
   }
 
   /**
+   * Shape a pattern's progress with the layer's easing curve.
+   *
+   * Patterns worked their progress out straight from the clock, so the easing
+   * curve did nothing to them at all - a stack filled at a dead constant rate
+   * however it was set. The curve lives on the keyframes, which a pattern
+   * otherwise only reads for brightness, so the first key's ease is the
+   * layer's. `hold` is treated as linear: it means "do not interpolate between
+   * keyframes", and a pattern has none to hold between, so obeying it
+   * literally would just freeze the pattern at its start.
+   */
+  patternEase(layer, u) {
+    const name = (layer.keys && layer.keys[0] && layer.keys[0].ease) || 'linear';
+    if (name === 'linear' || name === 'hold') return u;
+    const fn = EASES[name];
+    if (!fn) return u;
+    // Cycling patterns wrap 1 -> 0. Every curve maps 0 to 0 and 1 to 1, so the
+    // wrap stays continuous and only the speed within a cycle changes.
+    const c = u < 0 ? 0 : (u > 1 ? 1 : u);
+    const v = fn(c);
+    return Number.isFinite(v) ? v : u;
+  }
+
+  /**
    * A period that divides the clip evenly.
    *
    * A pattern's own timing has nothing to do with how long its layer runs, so
@@ -836,7 +860,7 @@ export class ShowRenderer {
       if (!b.n) return false;
       const period = this.fitPeriod(layer, p.periodMs, p.fit !== false);
       const lambda = Math.max(0.02, p.wavelength);
-      const phase = t / period;
+      const phase = this.patternEase(layer, (t / period) % 1) * (p.reverse ? -1 : 1);
       const floor = Math.max(0, Math.min(1, p.floorLevel));
       const sharp = Math.max(0.1, p.sharpness);
       const cx = (b.minX + b.maxX) / 2;
@@ -884,7 +908,11 @@ export class ShowRenderer {
       const fillMs = p.fit !== false && layer.durationMs > 0
         ? layer.durationMs
         : Math.max(1, p.fillMs);
-      const filled = Math.min(cells, (t / fillMs) * cells);
+      // Reverse runs the whole fill backwards: it starts full and empties, with
+      // the piece being taken away travelling back out the way it came in.
+      const fillRaw = this.patternEase(layer, t / fillMs);
+      const fillProg = p.reverse ? 1 - fillRaw : fillRaw;
+      const filled = Math.max(0, Math.min(cells, fillProg * cells));
 
       // Cell fill order. Tetris-style is bottom row first, left to right.
       const cellRank = (col, row) => {
@@ -1039,7 +1067,8 @@ export class ShowRenderer {
         const l = lights[i];
         const ang = Math.atan2((l.y - cy) / (b.h || 1), (l.x - cx) / (b.w || 1));
         const u = (ang / (Math.PI * 2) + 1) % 1;              // 0..1 around
-        const phase = (u * arms - dir * (t / period) * arms) % 1;
+        const spun = this.patternEase(layer, (t / period) % 1);
+        const phase = (u * arms - dir * spun * arms) % 1;
         const f = (phase + 1) % 1;
         if (f > wide) continue;
         const level = 1 - f / wide;                            // bright leading edge
@@ -1056,7 +1085,7 @@ export class ShowRenderer {
       const period = this.fitPeriod(layer, p.sweepMs, p.fit !== false);
       const width = Math.max(0.02, p.bandWidth);
       const bounce = p.bounce !== false;
-      let u = (t / period) % 1;
+      let u = this.patternEase(layer, (t / period) % 1);
       // Reversing a bounce by mirroring time does nothing: a triangle wave is
       // symmetric, so head(1-u) === head(u). Half a period starts it at the far
       // end travelling the other way, which is what reversing a bounce means.
@@ -1107,12 +1136,15 @@ export class ShowRenderer {
         if (mask && !mask[i]) continue;
         const l = lights[i];
         const lx = (l.x - b.minX) / (b.w || 1);
-        const ly = (l.y - b.minY) / (b.h || 1);
+        // Reverse makes the drops rise: flipping the light's height is the same
+        // as flipping gravity, and keeps the trail on the correct side.
+        const rawY = (l.y - b.minY) / (b.h || 1);
+        const ly = p.reverse ? 1 - rawY : rawY;
         let level = 0;
         for (const d of cols) {
           const dx = Math.abs(lx - d.x);
           if (dx > colWidth) continue;
-          const head = ((t / period) * d.speed + d.offset) % 1;
+          const head = this.patternEase(layer, ((t / period) * d.speed + d.offset) % 1);
           const below = ly - head;      // y grows downward in light space
           if (below < -0.02 || below > tail) continue;
           const along = below <= 0 ? 1 : 1 - below / tail;
@@ -1166,7 +1198,11 @@ export class ShowRenderer {
       const period = p.fit !== false && layer.durationMs > 0
         ? layer.durationMs
         : Math.max(1, p.spreadMs);
-      const front = (t / period) * (hops.max + 1);
+      // Reverse plays the spread backwards - everything lit, then going dark
+      // from the last lights it reached back towards the seed.
+      const spreadRaw = this.patternEase(layer, t / period);
+      const spreadProg = p.reverse ? 1 - spreadRaw : spreadRaw;
+      const front = spreadProg * (hops.max + 1);
       const trail = Math.max(0.05, p.spreadTrail);
 
       for (let i = 0; i < lights.length; i++) {
@@ -1239,11 +1275,23 @@ export class ShowRenderer {
       const STEPS = tail > 0 ? 7 : 1;
       const heads = [];
       for (let k = 0; k < n; k++) {
-        const rand = mulberry32((base ^ (k * 0x9E3779B1) ^ 0x5f356495) >>> 0);
-        const offset = rand();
+        // No random phase offset. Each comet used to start at its own point in
+        // the run, so its `u` wrapped 1 -> 0 at a different moment *inside* the
+        // clip - and at that instant it vanished and reappeared at the other
+        // end of its path. That is the comet jumping to a different place on the
+        // playfield. Starting them together means the only wrap is at the end of
+        // the clip, where the layer stops anyway; they still differ by where
+        // they start and which way they are thrown.
+        const headU = this.patternEase(layer, (t / period) % 1);
         for (let s2 = 0; s2 < STEPS; s2++) {
           const back = (s2 / Math.max(1, STEPS - 1)) * tail * 0.35;
-          const u = (((t / period) + offset) - back % 1 + 1) % 1;
+          const u = headU - back;
+          // Do NOT wrap a trail sample below zero. Wrapping put it at u near 1,
+          // the far end of the path, so a piece of the trail - and with a small
+          // offset the head itself - appeared somewhere else on the playfield
+          // entirely, which read as the comet teleporting mid-bounce. At the
+          // start of a run there is simply no trail behind it yet.
+          if (u < 0) continue;
           heads.push({ pos: headAt(k, u), gain: s2 === 0 ? 1 : 1 - s2 / STEPS });
         }
       }
@@ -1269,14 +1317,15 @@ export class ShowRenderer {
     if (p.type === 'sweep') {
       // Whole tag groups in sequence. Chase steps light by light, which reads
       // as noise on a scattered map; stepping group by group reads as a gesture.
-      const order = (p.tagOrder || []).filter(Boolean);
+      let order = (p.tagOrder || []).filter(Boolean);
       if (!order.length) return false;
+      if (p.reverse) order = order.slice().reverse();
       // one pass through the groups over the clip, for the same reason
       const dwell = p.fit !== false && layer.durationMs > 0
         ? layer.durationMs / order.length
         : Math.max(1, p.dwellMs);
       const cross = Math.max(0, Math.min(0.9, p.crossfade));
-      const u = (t / (dwell * order.length)) % 1;
+      const u = this.patternEase(layer, (t / (dwell * order.length)) % 1);
       const pos = u * order.length;              // 0..order.length
 
       for (let i = 0; i < lights.length; i++) {
@@ -1306,7 +1355,7 @@ export class ShowRenderer {
       const period = this.fitPeriod(layer, p.periodMs, p.fit !== false);
       const l1 = Math.max(0.02, p.wavelength);
       const l2 = Math.max(0.02, p.wavelength2);
-      const phase = t / period;
+      const phase = this.patternEase(layer, (t / period) % 1) * (p.reverse ? -1 : 1);
       const cx = (b.minX + b.maxX) / 2;
       const cy = (b.minY + b.maxY) / 2;
 
@@ -1336,7 +1385,8 @@ export class ShowRenderer {
       const stepMs = p.fit !== false && layer.durationMs > 0
         ? Math.max(1, layer.durationMs / n)
         : Math.max(1, p.stepMs);
-      const head = Math.floor(t / stepMs);
+      // eased across one full pass, so a chase can accelerate along the lights
+      const head = Math.floor(this.patternEase(layer, (t / stepMs) / n) * n);
       const width = Math.max(1, Math.round(p.width));
       const tail = Math.max(0, Math.round(p.tail));
       for (let w = 0; w < width; w++) {
