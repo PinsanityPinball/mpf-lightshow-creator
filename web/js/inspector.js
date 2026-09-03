@@ -1307,6 +1307,33 @@ export class Inspector {
 
   // ------------------------------------------------------------ export
 
+  /**
+   * A collapsible block, for settings that are chosen once and then ignored.
+   *
+   * Open state is remembered per key for the session, so someone doing work in
+   * there is not made to reopen it every time the panel rebuilds - which it
+   * does on every edit.
+   */
+  fold(parent, key, label) {
+    this.foldOpen = this.foldOpen || {};
+    const open = !!this.foldOpen[key];
+    const box = el('div', { class: 'fold-body' + (open ? '' : ' hidden') });
+    const arrow = el('span', { class: 'wiz-adv-arrow', text: open ? '\u25be' : '\u25b8' });
+    const toggle = el('button', {
+      class: 'wiz-adv' + (open ? ' on' : ''),
+      onclick: () => {
+        const now = !this.foldOpen[key];
+        this.foldOpen[key] = now;
+        box.classList.toggle('hidden', !now);
+        toggle.classList.toggle('on', now);
+        arrow.textContent = now ? '\u25be' : '\u25b8';
+      },
+    }, [arrow, el('span', { text: label })]);
+    parent.appendChild(toggle);
+    parent.appendChild(box);
+    return box;
+  }
+
   buildExport() {
     const app = this.app;
     const root = clear(this.panels.export);
@@ -1315,7 +1342,7 @@ export class Inspector {
     const edit = (label, fn) => { app.pushUndo(label); fn(); app.onProjectEdit({}); };
 
     root.appendChild(section('MPF version'));
-    root.appendChild(field('Target', selectBox(x.mpfTarget || '0.80', [
+    root.appendChild(field('Write for', selectBox(x.mpfTarget || '0.80', [
       ['0.80', 'MPF 0.57 and newer'],
       ['0.50', 'MPF 0.50 - 0.56 (legacy)'],
     ], (v) => edit('mpf target', () => { x.mpfTarget = v; this.buildExport(); }))));
@@ -1327,69 +1354,74 @@ export class Inspector {
       : 'Writes #show_version=6 and an explicit "duration: 33ms" on every step, so '
         + 'the show plays at the correct rate at the default speed.'));
 
-    root.appendChild(section('Blending'));
-    root.appendChild(field('Layers add in', selectBox(x.blend || 'linear', [
+    // Where the show goes and the button that writes it are what this panel
+    // is for. Blending, sampling and YAML output shape the file once per
+    // machine and are then left alone, so they sit behind a fold instead of
+    // filling the panel above the thing you actually came here to press.
+    const adv = this.fold(root, 'export', 'Output settings');
+    adv.appendChild(section('Blending'));
+    adv.appendChild(field('Layers add in', selectBox(x.blend || 'linear', [
       ['linear', 'Linear light (physical)'],
       ['srgb', 'sRGB (original tool)'],
     ], (v) => edit('blend', () => { x.blend = v; this.buildExport(); }))));
-    root.appendChild(hint(x.blend === 'srgb'
+    adv.appendChild(hint(x.blend === 'srgb'
       ? 'Adds the encoded 8-bit values, like the original tool did. Overlaps come '
         + 'out brighter than the hardware will actually produce.'
       : 'Converts to linear light before adding, which is how real LEDs combine. '
         + 'Overlapping layers land where the machine will put them.'));
 
-    root.appendChild(section('Sampling'));
-    root.appendChild(field('Colour', selectBox(x.mode, [
+    adv.appendChild(section('Sampling'));
+    adv.appendChild(field('Colour', selectBox(x.mode, [
       ['colour', 'Full colour'],
       ['threshold', 'Cut dark values'],
       ['bw', 'Black & white'],
     ], (v) => edit('mode', () => { x.mode = v; this.buildExport(); }))));
     if (x.mode !== 'colour') {
-      root.appendChild(slider('Threshold', x.threshold, { min: 1, max: 254, step: 1 },
+      adv.appendChild(slider('Threshold', x.threshold, { min: 1, max: 254, step: 1 },
         this.live('export:threshold', 'threshold', (v) => { x.threshold = v; })));
     }
-    root.appendChild(slider('Sample radius (px)', x.sampleRadius, { min: 0, max: 8, step: 1 },
+    adv.appendChild(slider('Sample radius (px)', x.sampleRadius, { min: 0, max: 8, step: 1 },
       this.live('export:sampleRadius', 'sample radius', (v) => { x.sampleRadius = v; })));
-    root.appendChild(hint('0 samples a single pixel like the original tool. 2–3 gives smoother, less jittery output.'));
-    root.appendChild(slider('Gamma', x.gamma, { min: 0.3, max: 3, step: 0.05 },
+    adv.appendChild(hint('0 samples a single pixel like the original tool. 2–3 gives smoother, less jittery output.'));
+    adv.appendChild(slider('Gamma', x.gamma, { min: 0.3, max: 3, step: 0.05 },
       this.live('export:gamma', 'gamma', (v) => { x.gamma = v; })));
-    root.appendChild(slider('Minimum lit level', x.minLevel, { min: 0, max: 128, step: 1 },
+    adv.appendChild(slider('Minimum lit level', x.minLevel, { min: 0, max: 128, step: 1 },
       this.live('export:minLevel', 'minimum level', (v) => { x.minLevel = v; })));
-    root.appendChild(hint('Lifts dim pixels so faint edges still light an LED.'));
+    adv.appendChild(hint('Lifts dim pixels so faint edges still light an LED.'));
 
-    root.appendChild(section('YAML output'));
-    root.appendChild(el('div', { class: 'btn-row' }, [
+    adv.appendChild(section('YAML output'));
+    adv.appendChild(el('div', { class: 'btn-row' }, [
       checkbox('Only changed lights per step', x.diffOnly !== false,
         (v) => edit('diff', () => { x.diffOnly = v; })),
     ]));
-    root.appendChild(el('div', { class: 'btn-row' }, [
+    adv.appendChild(el('div', { class: 'btn-row' }, [
       checkbox('Write "stop" for black', !!x.blackAsStop,
         (v) => edit('stop', () => { x.blackAsStop = v; })),
     ]));
-    root.appendChild(field('Fade (ms)', numberInput(x.fadeMs || 0, 0, 5000, 1,
+    adv.appendChild(field('Fade (ms)', numberInput(x.fadeMs || 0, 0, 5000, 1,
       (v) => edit('fade', () => { x.fadeMs = Math.max(0, Math.round(v)); }))));
-    root.appendChild(hint('0 = no fade key, matching the original output.'));
+    adv.appendChild(hint('0 = no fade key, matching the original output.'));
 
-    root.appendChild(section('Dead frames'));
-    root.appendChild(el('div', { class: 'btn-row' }, [
+    adv.appendChild(section('Dead frames'));
+    adv.appendChild(el('div', { class: 'btn-row' }, [
       checkbox('Trim dark frames at the start', x.trimStart === true,
         (v) => edit('trim start', () => { x.trimStart = v; this.buildExport(); })),
     ]));
-    root.appendChild(el('div', { class: 'btn-row' }, [
+    adv.appendChild(el('div', { class: 'btn-row' }, [
       checkbox('Trim dark frames at the end', x.trimEnd !== false,
         (v) => edit('trim end', () => { x.trimEnd = v; this.buildExport(); })),
     ]));
-    root.appendChild(hint(x.trimStart
+    adv.appendChild(hint(x.trimStart
       ? 'Trimming the start shifts every cue earlier by however much silence is '
         + 'removed. Leave it off for a show cut to audio or video.'
       : 'Leading silence is kept, so the show stays in sync with whatever you '
         + 'timed it against.'));
-    root.appendChild(field('Idle steps', selectBox(x.idleMode || 'hold', [
+    adv.appendChild(field('Idle steps', selectBox(x.idleMode || 'hold', [
       ['hold', 'Restate previous colours'],
       ['collapse', 'Merge into the next step (+N)'],
       ['bare', 'Time-only step (original tool)'],
     ], (v) => edit('idle mode', () => { x.idleMode = v; this.buildExport(); }))));
-    root.appendChild(hint(x.idleMode === 'bare'
+    adv.appendChild(hint(x.idleMode === 'bare'
       ? 'The original tool wrote steps containing only a time. Your hand-finished shows have none of these — the other two options avoid them.'
       : 'Steps where nothing changes still need to consume time. This keeps every step valid YAML with real content.'));
 

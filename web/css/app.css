@@ -735,3 +735,6 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
   padding: 0 3px;
   cursor: text;
 }
+
+/* a collapsible block of set-once settings */
+.fold-body { padding-left: 2px; }
