@@ -107,6 +107,87 @@ export const PRESETS = [
   },
 
   {
+    id: 'contagion',
+    name: 'Contagion',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Contagion', durationMs: 3000,
+      pattern: { type: 'contagion', color: c, spreadMs: 3000, spreadFrom: 'bottom',
+        spreadRadius: 0.18, spreadHold: true },
+    }),
+  },
+
+  {
+    id: 'comet',
+    name: 'Comet',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Comet', durationMs: 3000,
+      pattern: { type: 'comet', color: c, comets: 2, cometMs: 2500,
+        launchSpeed: 1.6, gravity: 3.2, bounceDamp: 0.62 },
+    }),
+  },
+
+  {
+    id: 'sweep-tags',
+    name: 'Group sweep',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Group sweep', durationMs: 2400,
+      pattern: { type: 'sweep', color: c, dwellMs: 400, crossfade: 0.35 },
+    }),
+  },
+
+  {
+    id: 'interference',
+    name: 'Interference',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Interference', durationMs: 5000,
+      pattern: { type: 'interference', color: c, axis: 'radial',
+        wavelength: 0.5, wavelength2: 0.62, periodMs: 2500 },
+    }),
+  },
+
+  {
+    id: 'voronoi',
+    name: 'Territories',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Territories', durationMs: 6000,
+      pattern: { type: 'voronoi', color: c, seeds: 4, voronoiMs: 6000,
+        voronoiDrift: 0.22 },
+    }),
+  },
+
+  {
+    id: 'breathe',
+    name: 'Breathe',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Breathe', durationMs: 4000,
+      pattern: { type: 'solid', color: c, pulseShape: 'breathe', pulseMs: 2000 },
+    }),
+  },
+
+  {
+    id: 'heartbeat',
+    name: 'Heartbeat',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Heartbeat', durationMs: 4000,
+      pattern: { type: 'solid', color: c, pulseShape: 'heartbeat', pulseMs: 1100 },
+    }),
+  },
+
+  {
     id: 'sparkle',
     name: 'Sparkle',
     group: 'Patterns',

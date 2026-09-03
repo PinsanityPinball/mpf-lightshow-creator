@@ -1,8 +1,13 @@
 # Pattern ideas
 
-Planning only — **nothing here is implemented**. These are candidates for the
-next round of light patterns, written up so the good ones can be picked out
-before any code is written.
+> **Status: all six are now built.** Contagion, Comet, Group sweep,
+> Interference and Territories shipped as patterns, and Breathing shipped as a
+> *pulse shape* option on Solid and Blink rather than as a pattern of its own,
+> which is the right home for it. This document is kept as the reasoning behind
+> each one, and for the rejected list at the bottom.
+
+These were candidates for the next round of light patterns, written up so the
+good ones could be picked out before any code was written.
 
 The bar every one of these has to clear: it should be something you could not
 reasonably write by hand in YAML, and it should read well on a *sparse* playfield

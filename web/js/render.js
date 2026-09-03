@@ -18,6 +18,33 @@ import {
 
 const D2R = Math.PI / 180;
 
+// Neighbour graphs for the contagion pattern, keyed on the lights array so a
+// new light map drops them automatically.
+const CONTAGION_CACHE = new WeakMap();
+
+/** Brightness envelopes for Solid and Blink. u is 0..1 through one cycle. */
+const PULSE_SHAPES = {
+  steady: () => 1,
+  breathe: (u) => {
+    // quick in, slow out - a real breath is not a sine
+    const rise = 0.35;
+    return u < rise
+      ? Math.sin((u / rise) * (Math.PI / 2))
+      : Math.cos(((u - rise) / (1 - rise)) * (Math.PI / 2));
+  },
+  heartbeat: (u) => {
+    // lub-dub: a big beat, a smaller one, then a rest
+    const beat = (c, w, h) => {
+      const x = Math.abs(u - c) / w;
+      return x >= 1 ? 0 : h * (1 - x * x) * (1 - x * x);
+    };
+    return Math.min(1, beat(0.12, 0.10, 1) + beat(0.30, 0.09, 0.62));
+  },
+  'ramp-up': (u) => u,
+  'ramp-down': (u) => 1 - u,
+  triangle: (u) => (u < 0.5 ? u * 2 : 2 - u * 2),
+};
+
 // Fixed sampling resolution. Independent of window size so what you preview is
 // bit-for-bit what you export.
 export const RENDER_W = 480;
@@ -569,6 +596,110 @@ export class ShowRenderer {
   }
 
   /**
+   * Hop distance from a seed light to every other, over a neighbour graph.
+   *
+   * This is what lets light spread through the playfield's real shape - up a
+   * ramp, around an orbit - rather than along a straight line or a light index.
+   * Building the graph is O(n squared), far too slow per frame, so it is cached
+   * against the lights array identity; app.js replaces that array whenever the
+   * map changes, which invalidates this for free.
+   */
+  contagionHops(lights, mask, radius, from) {
+    if (!CONTAGION_CACHE.has(lights)) CONTAGION_CACHE.set(lights, new Map());
+    const perMap = CONTAGION_CACHE.get(lights);
+    // the mask matters: a layer aimed at one tag spreads only within it
+    let maskSig = 'all';
+    if (mask) {
+      let n = 0, h = 0;
+      for (let i = 0; i < mask.length; i++) if (mask[i]) { n++; h = (h * 31 + i) | 0; }
+      maskSig = n + ':' + h;
+    }
+    const key = `${radius.toFixed(3)}:${from}:${maskSig}`;
+    const hit = perMap.get(key);
+    if (hit) return hit;
+
+    const idx = [];
+    for (let i = 0; i < lights.length; i++) if (!mask || mask[i]) idx.push(i);
+    const d = new Float32Array(lights.length).fill(-1);
+    if (!idx.length) return { d, max: 0 };
+
+    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    for (const i of idx) {
+      const l = lights[i];
+      if (l.x < minX) minX = l.x; if (l.x > maxX) maxX = l.x;
+      if (l.y < minY) minY = l.y; if (l.y > maxY) maxY = l.y;
+    }
+    const w = Math.max(1e-6, maxX - minX), h = Math.max(1e-6, maxY - minY);
+    const nx = (i) => (lights[i].x - minX) / w;
+    const ny = (i) => (lights[i].y - minY) / h;
+
+    // seed: the light furthest towards the chosen edge, or nearest the middle
+    let seed = idx[0], best = Infinity;
+    for (const i of idx) {
+      let score;
+      if (from === 'top') score = ny(i);
+      else if (from === 'bottom') score = 1 - ny(i);
+      else if (from === 'left') score = nx(i);
+      else if (from === 'right') score = 1 - nx(i);
+      else {
+        const dx = nx(i) - 0.5, dy = ny(i) - 0.5;
+        score = dx * dx + dy * dy;
+      }
+      if (score < best) { best = score; seed = i; }
+    }
+
+    const r2 = radius * radius;
+    const adj = new Map();
+    for (const i of idx) adj.set(i, []);
+    for (let a = 0; a < idx.length; a++) {
+      for (let b = a + 1; b < idx.length; b++) {
+        const i = idx[a], j = idx[b];
+        const dx = nx(i) - nx(j), dy = ny(i) - ny(j);
+        if (dx * dx + dy * dy <= r2) { adj.get(i).push(j); adj.get(j).push(i); }
+      }
+    }
+
+    d[seed] = 0;
+    let queue = [seed], max = 0;
+    while (queue.length) {
+      const next = [];
+      for (const i of queue) {
+        for (const j of adj.get(i)) {
+          if (d[j] >= 0) continue;
+          d[j] = d[i] + 1;
+          if (d[j] > max) max = d[j];
+          next.push(j);
+        }
+      }
+      queue = next;
+    }
+    // A sparse map leaves islands the spread never reaches. Rather than leave
+    // them dark forever, they light one hop after everything else.
+    for (const i of idx) if (d[i] < 0) d[i] = max + 1;
+    if (idx.some((i) => d[i] === max + 1)) max += 1;
+
+    const out = { d, max };
+    perMap.set(key, out);
+    return out;
+  }
+
+  /** Height of a ball thrown at v0 and bouncing, at time tt. Closed form. */
+  cometHeight(tt, v0, g, damp) {
+    let v = v0, start = 0;
+    for (let n = 0; n < 40; n++) {
+      const span = (2 * v) / g;
+      if (tt < start + span) {
+        const lt = tt - start;
+        return Math.max(0, v * lt - 0.5 * g * lt * lt);
+      }
+      start += span;
+      v *= damp;
+      if (v < 0.01) return 0;
+    }
+    return 0;
+  }
+
+  /**
    * A period that divides the clip evenly.
    *
    * A pattern's own timing has nothing to do with how long its layer runs, so
@@ -989,6 +1120,192 @@ export class ShowRenderer {
       return true;
     }
 
+    if (p.type === 'contagion') {
+      // Light spreading light-to-light. Every other pattern follows a line, a
+      // circle or the light index; this one follows how the lights actually sit
+      // on the playfield, so it climbs a ramp and rounds an orbit on its own.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const hops = this.contagionHops(lights, mask,
+        Math.max(0.02, p.spreadRadius), p.spreadFrom || 'centre');
+      const period = this.fitPeriod(layer, p.spreadMs, p.fit !== false);
+      const front = (t / period) * (hops.max + 1);
+      const trail = Math.max(0.05, p.spreadTrail);
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const h = hops.d[i];
+        if (h < 0) continue;
+        const age = front - h;
+        if (age < 0) continue;
+        const level = p.spreadHold !== false
+          ? Math.min(1, age)                                   // eases in, stays lit
+          : (age < trail ? 1 - age / trail : 0);               // a travelling front
+        if (level > 0.004) put(i, p.color, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'comet') {
+      // A thrown point under gravity, bouncing off the walls and floor. The
+      // motion is pinball motion, and it is the sort of arc that is tedious to
+      // keyframe by hand. Computed from t directly, never stepped, so the
+      // preview and the export agree.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.cometMs, p.fit !== false);
+      const n = Math.max(1, Math.round(p.comets));
+      const base = hashString(layer.seedKey || layer.id) ^ ((p.seed | 0) * 2654435761);
+      const g = Math.max(0.2, p.gravity);
+      const damp = Math.max(0.05, Math.min(0.95, p.bounceDamp));
+      const width = Math.max(0.02, p.cometWidth);
+      const tail = Math.max(0, p.cometTrail);
+
+      const heads = [];
+      for (let k = 0; k < n; k++) {
+        const rand = mulberry32((base ^ (k * 0x9E3779B1)) >>> 0);
+        const x0 = 0.15 + rand() * 0.7;
+        const vx = (rand() < 0.5 ? -1 : 1) * (0.4 + rand() * 0.8);
+        const offset = rand();
+        const v0 = Math.max(0.2, p.launchSpeed) * (0.8 + rand() * 0.4);
+        const u = ((t / period) + offset) % 1;
+        const tt = u * (2 * v0 / g) * 3.2;          // about three bounces per run
+        // horizontal travel, folded back at the walls
+        let hx = x0 + vx * tt;
+        hx = Math.abs(hx % 2);
+        if (hx > 1) hx = 2 - hx;
+        const hy = 1 - Math.min(1, this.cometHeight(tt, v0, g, damp));
+        heads.push({ x: hx, y: hy, prevY: hy });
+      }
+
+      const aspect = b.h > 0 ? b.w / b.h : 1;
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        const lx = (l.x - b.minX) / (b.w || 1);
+        const ly = (l.y - b.minY) / (b.h || 1);
+        let level = 0;
+        for (const hd of heads) {
+          const dx = (lx - hd.x) * (aspect > 0 ? 1 : 1);
+          const dy = ly - hd.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < width) level = Math.max(level, 1 - dist / width);
+          else if (tail > 0 && dy < 0 && -dy < tail && Math.abs(dx) < width * 1.6) {
+            // a short trail hanging above where it has just been
+            level = Math.max(level, (1 + dy / tail) * 0.5);
+          }
+        }
+        if (level > 0.004) put(i, p.color, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'sweep') {
+      // Whole tag groups in sequence. Chase steps light by light, which reads
+      // as noise on a scattered map; stepping group by group reads as a gesture.
+      const order = (p.tagOrder || []).filter(Boolean);
+      if (!order.length) return false;
+      const dwell = this.fitPeriod(layer, Math.max(1, p.dwellMs) * order.length,
+        p.fit !== false) / order.length;
+      const cross = Math.max(0, Math.min(0.9, p.crossfade));
+      const u = (t / (dwell * order.length)) % 1;
+      const pos = u * order.length;              // 0..order.length
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const tags = lights[i].tags || [];
+        let level = 0;
+        for (let gi = 0; gi < order.length; gi++) {
+          if (tags.indexOf(order[gi]) < 0) continue;
+          const since = pos - gi;
+          if (since < 0) continue;
+          if (p.sweepHold) { level = Math.max(level, 1); continue; }
+          if (since >= 1 + cross) continue;
+          // full through its own slot, then fading out over the crossfade
+          level = Math.max(level, since <= 1 ? 1 : 1 - (since - 1) / Math.max(0.01, cross));
+        }
+        if (level > 0.004) put(i, p.color, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'interference') {
+      // Two wave fields multiplied. The beat between them travels far slower
+      // than either wave, which is a motion you cannot get from one wave and
+      // certainly cannot write per light.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.periodMs, p.fit !== false);
+      const l1 = Math.max(0.02, p.wavelength);
+      const l2 = Math.max(0.02, p.wavelength2);
+      const phase = t / period;
+      const cx = (b.minX + b.maxX) / 2;
+      const cy = (b.minY + b.maxY) / 2;
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        let pos;
+        if (p.axis === 'x') pos = (l.x - b.minX) / b.w;
+        else if (p.axis === 'radial') {
+          const dx = (l.x - cx) / b.w, dy = (l.y - cy) / b.h;
+          pos = Math.sqrt(dx * dx + dy * dy) * 2;
+        } else pos = (l.y - b.minY) / b.h;
+
+        const w1 = (Math.sin(2 * Math.PI * (pos / l1 - phase)) + 1) / 2;
+        const w2 = (Math.sin(2 * Math.PI * (pos / l2 - phase)) + 1) / 2;
+        const level = w1 * w2;
+        if (level > 0.004) put(i, p.color, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'voronoi') {
+      // Drifting seeds, each owning the lights nearest to it. Lights flip
+      // colour as the boundaries sweep over them, which is a whole-playfield
+      // effect with no shape anywhere in it.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.voronoiMs, p.fit !== false);
+      const n = Math.max(1, Math.round(p.seeds));
+      const base = hashString(layer.seedKey || layer.id) ^ ((p.seed | 0) * 2654435761);
+      const drift = Math.max(0, p.voronoiDrift);
+      const palette = (p.colors && p.colors.length) ? p.colors : [p.color];
+      const u = (t / period) % 1;
+
+      const pts = [];
+      for (let k = 0; k < n; k++) {
+        const rand = mulberry32((base ^ (k * 0x9E3779B1)) >>> 0);
+        const ox = rand(), oy = rand();
+        const ang = rand() * Math.PI * 2 + u * Math.PI * 2;
+        pts.push({
+          x: ox + Math.cos(ang) * drift,
+          y: oy + Math.sin(ang) * drift,
+          hex: palette[k % palette.length],
+        });
+      }
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        const lx = (l.x - b.minX) / (b.w || 1);
+        const ly = (l.y - b.minY) / (b.h || 1);
+        let bestD = Infinity, second = Infinity, hex = pts[0].hex;
+        for (const q of pts) {
+          const dx = lx - q.x, dy = ly - q.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bestD) { second = bestD; bestD = d2; hex = q.hex; }
+          else if (d2 < second) second = d2;
+        }
+        // dim right on a boundary so the territories have visible edges
+        const edge = second === Infinity ? 1
+          : Math.min(1, (Math.sqrt(second) - Math.sqrt(bestD)) / 0.06);
+        const level = 0.25 + 0.75 * Math.max(0, edge);
+        put(i, hex, level);
+      }
+      return true;
+    }
+
     if (p.type === 'chase') {
       const order = orderedTargets(layer, lights, mask);
       const n = order.length;
@@ -1012,6 +1329,18 @@ export class ShowRenderer {
 
     // blink and solid both come down to "which colour right now"
     let hex = p.color;
+    // A shaped brightness envelope. A plain fade is what keyframes are for, but
+    // a double-thump heartbeat or a quick-in slow-out breath is tedious to
+    // keyframe and trivial here.
+    let envelope = 1;
+    const shape = PULSE_SHAPES[p.pulseShape];
+    if (shape && p.pulseShape !== 'steady') {
+      const pulse = this.fitPeriod(layer, p.pulseMs, p.fit !== false);
+      const depth = Math.max(0, Math.min(1, p.pulseDepth == null ? 1 : p.pulseDepth));
+      const raw = Math.max(0, Math.min(1, shape((t / pulse) % 1)));
+      envelope = 1 - depth * (1 - raw);
+      if (envelope <= 0.004) return true;
+    }
     if (p.type === 'blink') {
       const on = Math.max(1, p.onMs);
       const off = Math.max(0, p.offMs);
@@ -1024,7 +1353,7 @@ export class ShowRenderer {
     }
     for (let i = 0; i < lights.length; i++) {
       if (mask && !mask[i]) continue;
-      put(i, hex, 1);
+      put(i, hex, envelope);
     }
     return true;
   }

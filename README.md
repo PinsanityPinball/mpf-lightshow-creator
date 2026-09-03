@@ -37,7 +37,7 @@ shapes, a real timeline, light patterns and direct manipulation.
 **Light patterns** — no shape, no sampling, exact colours straight to your lights
 
 - Chase, Marquee, Sparkle, Wave, Stack, Fire, Pinwheel, Scanner, Rain, Plasma,
-  Blink and Solid
+  Contagion, Comet, Group sweep, Interference, Territories, Blink and Solid
 - Most work off your real light *positions*, so they follow your playfield
   layout rather than a drawn shape
 
@@ -199,7 +199,28 @@ layer drives its tagged lights directly, with no shape and no pixel sampling, so
 | **Scanner** | The Knight Rider band, sweeping back and forth with a trail |
 | **Rain** | Drops falling down the playfield, each with a trail |
 | **Plasma** | Overlapping sine fields — every light its own colour and brightness |
-| **Solid** | One colour, which keyframe brightness can still fade |
+| **Contagion** | Light spreads from one light to its neighbours, then theirs — so it follows the shape of your playfield, climbing a ramp and rounding an orbit |
+| **Comet** | A point thrown under gravity, bouncing off the walls and floor, with a trail |
+| **Group sweep** | Whole tag groups lighting one after another, with a hand-over |
+| **Interference** | Two wave fields multiplied, so the beat between them travels far slower than either wave |
+| **Territories** | Drifting seeds, each owning its nearest lights; lights change colour as the boundaries sweep over them |
+| **Solid** | One colour, with an optional pulse shape |
+| **Blink** | On/off, also with a pulse shape |
+
+**Pulse shapes** on Solid and Blink give the brightness a curve: *Breathe*
+(quick in, slow out), *Heartbeat* (lub-dub then a rest), ramps and a triangle. A
+plain fade is what keyframes are for; these are the curves that are tedious to
+keyframe and trivial as a setting.
+
+**Contagion needs a sensible Reach.** It decides how close counts as a
+neighbour: too small and the spread cannot cross the gaps in your layout, too
+large and it jumps everywhere at once. The neighbour graph is built once per
+light map and cached — measured at 8 ms to build against 317 lights and 0.25 ms
+per frame afterwards, so a 300-frame export costs 74 ms rather than 2.4 seconds.
+
+**Group sweep needs tags.** Give it tag names in the order you want them to
+fire; the panel lists the tags on your map so you can click them in. With no
+tags it lights nothing and says so.
 
 **Fit to layer length** (on by default) makes one cycle span the clip: a
 complete fill for Stack, one pass for Chase, whole passes for Wave. Resize the

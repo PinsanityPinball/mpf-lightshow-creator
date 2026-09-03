@@ -1585,7 +1585,11 @@ function patternThumb(pattern) {
   g.fillStyle = '#05070a';
   g.fillRect(0, 0, 34, 34);
   g.fillStyle = '#8fd8ff';
-  const t = pattern ? pattern.type : 'blink';
+  let t = pattern ? pattern.type : 'blink';
+  // a pulsing solid is a different thing to look at than a steady one
+  if (t === 'solid' && pattern && pattern.pulseShape && pattern.pulseShape !== 'steady') {
+    t = 'pulse';
+  }
   if (t === 'chase') {
     for (let i = 0; i < 5; i++) {
       g.globalAlpha = 1 - i * 0.18;
@@ -1655,6 +1659,52 @@ function patternThumb(pattern) {
         g.fillRect(x, y, 2, 2);
       }
     }
+  } else if (t === 'pulse') {
+    // a brightness curve
+    g.globalAlpha = 1; g.strokeStyle = '#8fd8ff'; g.lineWidth = 2;
+    g.beginPath();
+    for (let x = 3; x <= 31; x++) {
+      const u = (x - 3) / 28;
+      const v = u < 0.35 ? Math.sin((u / 0.35) * Math.PI / 2)
+        : Math.cos(((u - 0.35) / 0.65) * Math.PI / 2);
+      const y = 28 - v * 20;
+      if (x === 3) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+  } else if (t === 'contagion') {
+    // rings of dots spreading outward from a bright seed
+    g.globalAlpha = 1;
+    g.beginPath(); g.arc(17, 26, 2.6, 0, Math.PI * 2); g.fill();
+    [[10,19],[17,18],[24,19],[7,12],[14,11],[20,11],[27,12],[11,5],[23,5]]
+      .forEach(([x, y], i) => { g.globalAlpha = 0.8 - i * 0.07;
+        g.beginPath(); g.arc(x, y, 2, 0, Math.PI * 2); g.fill(); });
+  } else if (t === 'comet') {
+    // a bright head on an arc, trailing behind
+    g.globalAlpha = 1;
+    g.beginPath(); g.arc(24, 10, 3, 0, Math.PI * 2); g.fill();
+    [[20,14],[16,19],[12,23],[9,27]].forEach(([x, y], i) => {
+      g.globalAlpha = 0.55 - i * 0.12;
+      g.beginPath(); g.arc(x, y, 2.2 - i * 0.3, 0, Math.PI * 2); g.fill(); });
+  } else if (t === 'sweep') {
+    // three groups, the middle one lit
+    [[3,0.3],[13,1],[23,0.3]].forEach(([x, a]) => {
+      g.globalAlpha = a; g.fillRect(x, 10, 8, 14); });
+  } else if (t === 'interference') {
+    // two beating waves
+    g.globalAlpha = 1; g.strokeStyle = '#8fd8ff'; g.lineWidth = 1.6;
+    [[5.5, 1], [7.5, 0.45]].forEach(([k, a]) => {
+      g.globalAlpha = a; g.beginPath();
+      for (let x = 3; x <= 31; x++) {
+        const y = 17 + Math.sin((x - 3) / k) * 7;
+        if (x === 3) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke(); });
+  } else if (t === 'voronoi') {
+    // four territories
+    g.globalAlpha = 1; g.fillRect(2, 2, 15, 18);
+    g.globalAlpha = 0.6; g.fillRect(18, 2, 14, 12);
+    g.globalAlpha = 0.35; g.fillRect(2, 21, 12, 11);
+    g.globalAlpha = 0.75; g.fillRect(15, 15, 17, 17);
   } else if (t === 'sparkle') {
     const pts = [[8, 9], [22, 7], [15, 17], [26, 20], [7, 24], [19, 27]];
     pts.forEach(([x, y], i) => {

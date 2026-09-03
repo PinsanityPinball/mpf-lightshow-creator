@@ -808,6 +808,11 @@ export class Inspector {
       ['scanner', 'Scanner (band sweeping back and forth)'],
       ['rain', 'Rain (drops falling)'],
       ['plasma', 'Plasma (soft moving wash)'],
+      ['contagion', 'Contagion (spreads light to light)'],
+      ['comet', 'Comet (thrown, bounces)'],
+      ['sweep', 'Sweep (tag group by group)'],
+      ['interference', 'Interference (two waves beating)'],
+      ['voronoi', 'Voronoi (drifting territories)'],
       ['solid', 'Solid colour'],
     ], (v) => edit('pattern type', () => { p.type = v; this.buildLayer(); }))));
     const FIT_MEANS = {
@@ -820,6 +825,13 @@ export class Inspector {
       scanner: 'a whole number of sweeps',
       rain: 'a whole number of falls',
       plasma: 'a whole number of cycles',
+      contagion: 'one complete spread',
+      comet: 'a whole number of throws',
+      sweep: 'one pass through the tag groups',
+      interference: 'a whole number of passes',
+      voronoi: 'one full drift',
+      solid: 'a whole number of pulses',
+      blink: 'a whole number of pulses',
     };
     if (FIT_MEANS[p.type]) {
       root.appendChild(el('div', { class: 'btn-row' }, [
@@ -1067,6 +1079,164 @@ export class Inspector {
       root.appendChild(hint('Three overlapping sine fields across the real light positions. '
         + 'Every light gets its own colour and brightness, which is the sort of thing that '
         + 'is hopeless to write by hand.'));
+    }
+
+    if (p.type === 'contagion') {
+      root.appendChild(field('Starts at', selectBox(p.spreadFrom, [
+        ['centre', 'The middle'], ['bottom', 'The bottom'], ['top', 'The top'],
+        ['left', 'The left'], ['right', 'The right'],
+      ], (v) => edit('spread from', () => { p.spreadFrom = v; this.buildLayer(); }))));
+      root.appendChild(field('Spread time (ms)', numberInput(p.spreadMs, 100, 60000, 50,
+        (v) => edit('spread time', () => {
+          p.spreadMs = Math.max(100, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(slider('Reach', p.spreadRadius, { min: 0.04, max: 0.6, step: 0.01 },
+        this.live(`${layer.id}:psr`, 'reach', (v) => { p.spreadRadius = v; })));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Lit stays lit', p.spreadHold !== false, (v) => edit('spread hold', () => {
+          p.spreadHold = v;
+          this.buildLayer();
+        })),
+      ]));
+      if (p.spreadHold === false) {
+        root.appendChild(slider('Front width', p.spreadTrail, { min: 0.05, max: 3, step: 0.05 },
+          this.live(`${layer.id}:pst`, 'front width', (v) => { p.spreadTrail = v; })));
+      }
+      root.appendChild(hint('Light spreads from one light to its neighbours, then theirs, '
+        + 'so it follows the shape of your playfield - up a ramp, round an orbit - rather '
+        + 'than a straight line. Reach decides how close counts as a neighbour: too small '
+        + 'and the spread cannot cross gaps, too large and it jumps everywhere at once.'));
+    }
+
+    if (p.type === 'comet') {
+      root.appendChild(slider('Comets', p.comets, { min: 1, max: 8, step: 1 },
+        this.live(`${layer.id}:pcn`, 'comets', (v) => { p.comets = Math.round(v); })));
+      root.appendChild(field('Throw time (ms)', numberInput(p.cometMs, 200, 60000, 50,
+        (v) => edit('throw time', () => {
+          p.cometMs = Math.max(200, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(slider('Launch speed', p.launchSpeed, { min: 0.3, max: 4, step: 0.05 },
+        this.live(`${layer.id}:pls`, 'launch speed', (v) => { p.launchSpeed = v; })));
+      root.appendChild(slider('Gravity', p.gravity, { min: 0.5, max: 12, step: 0.1 },
+        this.live(`${layer.id}:pg`, 'gravity', (v) => { p.gravity = v; })));
+      root.appendChild(slider('Bounciness', p.bounceDamp, { min: 0.05, max: 0.95, step: 0.01 },
+        this.live(`${layer.id}:pbd`, 'bounciness', (v) => { p.bounceDamp = v; })));
+      root.appendChild(slider('Size', p.cometWidth, { min: 0.02, max: 0.4, step: 0.01 },
+        this.live(`${layer.id}:pcw`, 'size', (v) => { p.cometWidth = v; })));
+      root.appendChild(slider('Trail', p.cometTrail, { min: 0, max: 0.8, step: 0.02 },
+        this.live(`${layer.id}:pct`, 'trail', (v) => { p.cometTrail = v; })));
+      root.appendChild(field('Seed', numberInput(p.seed, 1, 9999, 1,
+        (v) => edit('seed', () => { p.seed = Math.round(v); this.buildLayer(); }))));
+      root.appendChild(hint('Thrown from the floor and pulled back down, bouncing off the '
+        + 'walls. Worked out from the time directly rather than stepped frame to frame, so '
+        + 'it replays identically and the export matches the preview.'));
+    }
+
+    if (p.type === 'sweep') {
+      const known = (app.tags || []).map((tg) => tg.tag).filter((tg) => tg !== 'all');
+      const box = el('input', {
+        type: 'text', value: (p.tagOrder || []).join(', '),
+        placeholder: 'e.g. left_ramp, centre, right_orbit',
+        title: 'Tag names in the order they should light',
+      });
+      box.addEventListener('change', () => edit('tag order', () => {
+        p.tagOrder = String(box.value).split(/[,\s]+/).filter(Boolean);
+        this.buildLayer();
+      }));
+      root.appendChild(field('Order', box));
+      root.appendChild(field('Dwell (ms)', numberInput(p.dwellMs, 20, 30000, 10,
+        (v) => edit('dwell', () => {
+          p.dwellMs = Math.max(20, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(slider('Hand-over', p.crossfade, { min: 0, max: 0.9, step: 0.05 },
+        this.live(`${layer.id}:pcf`, 'hand-over', (v) => { p.crossfade = v; })));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Groups stay lit', !!p.sweepHold, (v) => edit('sweep hold', () => {
+          p.sweepHold = v;
+          this.buildLayer();
+        })),
+      ]));
+      if (!(p.tagOrder || []).length) {
+        root.appendChild(hint('No groups yet, so this layer lights nothing. Type tag names '
+          + 'above, separated by commas, in the order you want them to fire.'));
+      }
+      if (known.length) {
+        root.appendChild(el('div', { class: 'btn-row' },
+          known.slice(0, 10).map((tg) => button(tg, () => edit('add group', () => {
+            p.tagOrder = (p.tagOrder || []).concat([tg]);
+            this.buildLayer();
+          }), 'small'))));
+        root.appendChild(hint('Click a tag to append it. Groups fire one after another, '
+          + 'which reads far more clearly on a scattered playfield than a single '
+          + 'travelling dot.'));
+      }
+    }
+
+    if (p.type === 'interference') {
+      root.appendChild(field('Travels', selectBox(p.axis, [
+        ['radial', 'Out from the centre'],
+        ['y', 'Up the playfield'], ['x', 'Across the playfield'],
+      ], (v) => edit('axis', () => { p.axis = v; this.buildLayer(); }))));
+      root.appendChild(slider('First wavelength', p.wavelength, { min: 0.05, max: 2, step: 0.01 },
+        this.live(`${layer.id}:piw1`, 'wavelength', (v) => { p.wavelength = v; })));
+      root.appendChild(slider('Second wavelength', p.wavelength2, { min: 0.05, max: 2, step: 0.01 },
+        this.live(`${layer.id}:piw2`, 'wavelength', (v) => { p.wavelength2 = v; })));
+      root.appendChild(field('Cycle (ms)', numberInput(p.periodMs, 50, 60000, 50,
+        (v) => edit('cycle', () => {
+          p.periodMs = Math.max(50, Math.round(v));
+          this.buildLayer();
+        }))));
+      const beat = Math.abs(p.wavelength - p.wavelength2) < 0.001 ? null
+        : Math.abs(1 / (1 / p.wavelength - 1 / p.wavelength2));
+      root.appendChild(hint('Two waves multiplied. Close wavelengths give a slow travelling '
+        + 'beat; identical ones give one plain wave.'
+        + (beat ? ` These beat every ${beat.toFixed(2)} of the group.` : '')));
+    }
+
+    if (p.type === 'voronoi') {
+      root.appendChild(slider('Territories', p.seeds, { min: 2, max: 10, step: 1 },
+        this.live(`${layer.id}:pvs`, 'territories', (v) => { p.seeds = Math.round(v); })));
+      root.appendChild(field('Drift time (ms)', numberInput(p.voronoiMs, 500, 120000, 100,
+        (v) => edit('drift time', () => {
+          p.voronoiMs = Math.max(500, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(slider('Drift distance', p.voronoiDrift, { min: 0, max: 0.6, step: 0.01 },
+        this.live(`${layer.id}:pvd`, 'drift', (v) => { p.voronoiDrift = v; })));
+      root.appendChild(field('Seed', numberInput(p.seed, 1, 9999, 1,
+        (v) => edit('seed', () => { p.seed = Math.round(v); this.buildLayer(); }))));
+      root.appendChild(hint('Each territory owns the lights nearest to it and drifts, so '
+        + 'lights change colour as the boundaries sweep over them. Uses the sparkle '
+        + 'palette below for its colours.'));
+      root.appendChild(this.buildPalette(layer, edit));
+    }
+
+    if (p.type === 'blink' || p.type === 'solid') {
+      root.appendChild(section('Pulse'));
+      root.appendChild(field('Shape', selectBox(p.pulseShape || 'steady', [
+        ['steady', 'Steady (no pulse)'],
+        ['breathe', 'Breathe (quick in, slow out)'],
+        ['heartbeat', 'Heartbeat (lub-dub, then a rest)'],
+        ['triangle', 'Up and down'],
+        ['ramp-up', 'Ramp up'],
+        ['ramp-down', 'Ramp down'],
+      ], (v) => edit('pulse shape', () => { p.pulseShape = v; this.buildLayer(); }))));
+      if ((p.pulseShape || 'steady') !== 'steady') {
+        root.appendChild(field('Pulse (ms)', numberInput(p.pulseMs, 100, 60000, 50,
+          (v) => edit('pulse time', () => {
+            p.pulseMs = Math.max(100, Math.round(v));
+            this.buildLayer();
+          }))));
+        root.appendChild(slider('Depth', p.pulseDepth == null ? 1 : p.pulseDepth,
+          { min: 0, max: 1, step: 0.05 },
+          this.live(`${layer.id}:ppd`, 'depth', (v) => { p.pulseDepth = v; })));
+        root.appendChild(hint('Shapes the brightness over the whole layer. A plain fade is '
+          + 'what keyframes are for; these are the curves that are tedious to keyframe. '
+          + 'Depth 1 dips to black, lower keeps a floor.'));
+      }
     }
 
     if (p.type === 'blink') {

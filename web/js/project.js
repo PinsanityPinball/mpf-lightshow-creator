@@ -690,7 +690,9 @@ export function layerStateAtTime(layer, timeMs) {
 export function makePattern(over = {}) {
   return Object.assign({
     type: 'blink',        // blink | chase | sparkle | wavy | stack | marquee
-                          // | fire | pinwheel | scanner | rain | plasma | solid
+                          // | fire | pinwheel | scanner | rain | plasma
+                          // | contagion | comet | sweep | interference | voronoi
+                          // | solid
     // One cycle of the pattern spans the clip. Without it a pattern's own
     // timing is unrelated to the layer's length, so stretching a clip left the
     // pattern finishing early and sitting still for the rest.
@@ -741,6 +743,35 @@ export function makePattern(over = {}) {
     // plasma
     plasmaScale: 2.2,
     plasmaMs: 3000,
+    // solid / blink brightness envelope
+    pulseShape: 'steady',  // steady | breathe | heartbeat | ramp-up | ramp-down | triangle
+    pulseMs: 2000,
+    pulseDepth: 1,         // how far the dip goes: 1 = down to black
+    // contagion - light spreading light-to-light through the real layout
+    spreadMs: 2000,
+    spreadFrom: 'centre',  // centre | top | bottom | left | right
+    spreadRadius: 0.18,    // how close counts as a neighbour, as a fraction of the group
+    spreadHold: true,      // lit stays lit, versus a travelling front
+    spreadTrail: 0.35,     // width of that front when it does not hold
+    // comet - a thrown point under gravity, bouncing off the walls
+    cometMs: 2500,
+    comets: 2,
+    launchSpeed: 1.6,
+    gravity: 3.2,
+    bounceDamp: 0.62,
+    cometWidth: 0.09,
+    cometTrail: 0.28,
+    // sweep - whole tag groups in sequence
+    tagOrder: [],
+    dwellMs: 400,
+    crossfade: 0.35,       // fraction of the dwell spent handing over
+    sweepHold: false,      // groups stay lit once reached
+    // interference - two wave fields multiplied
+    wavelength2: 0.62,
+    // voronoi - drifting seeds, each owning its nearest lights
+    seeds: 4,
+    voronoiMs: 6000,
+    voronoiDrift: 0.22,
     // stack
     cols: 4,
     rows: 6,
@@ -1058,7 +1089,14 @@ export function normaliseProject(raw) {
     const layer = makeLayer(Object.assign({}, l, { keys: (l.keys || []).slice() }));
     layer.target = makeTarget(l.target || {});
     layer.kind = ['show', 'pattern'].includes(l.kind) ? l.kind : 'shape';
-    if (layer.kind === 'pattern') layer.pattern = makePattern(l.pattern || {});
+    if (layer.kind === 'pattern') {
+      layer.pattern = makePattern(l.pattern || {});
+      // arrays survive the merge as shared references otherwise
+      layer.pattern.tagOrder = Array.isArray(layer.pattern.tagOrder)
+        ? layer.pattern.tagOrder.filter((t) => typeof t === 'string') : [];
+      layer.pattern.colors = Array.isArray(layer.pattern.colors)
+        ? layer.pattern.colors.slice() : makePattern({}).colors;
+    }
     layer.shapeParams = Object.assign(shapeDefaults(layer.shapeId), l.shapeParams || {});
     layer.animParams = Array.isArray(l.animParams) ? l.animParams.slice() : [];
     // instancing: only finite times, sorted, with startMs pinned to the first
