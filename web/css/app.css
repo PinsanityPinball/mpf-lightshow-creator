@@ -752,3 +752,16 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
   border-color: var(--accent);
   color: #cdefff;
 }
+
+/* ---- shortcuts sheet ---------------------------------------------------- */
+.keys { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 22px; min-width: 560px; }
+.keys-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: 4px 10px;
+  align-items: baseline; margin-bottom: 10px;
+}
+.keys kbd {
+  font: 11px ui-monospace, Consolas, monospace; white-space: nowrap;
+  background: var(--bg3); border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 6px; color: var(--fg);
+}
+.keys span { font-size: 12px; color: var(--fg-dim); }

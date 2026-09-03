@@ -33,6 +33,7 @@
     <button id="btnRedo" class="btn icon" title="Redo (Ctrl+Shift+Z)">&#8631;</button>
   </div>
 
+  <button id="btnHelp" class="btn icon" title="Keys and mouse shortcuts (?)">?</button>
   <button id="btnExport" class="btn primary" title="Generate the MPF show YAML">Export show</button>
 </header>
 
@@ -95,7 +96,7 @@
     <div class="spacer"></div>
 
     <label class="chk" title="Dragging on the playfield writes to the keyframe at the playhead">
-      <input type="checkbox" id="tglAutoKey"> Auto-key
+      <input type="checkbox" id="tglAutoKey" title="Off: left-drag moves the whole layer, right-drag edits the keyframe at the playhead. On: left-drag edits keyframes too."> Auto-key
     </label>
     <button id="btnAddKey" class="btn" title="Add a keyframe at the playhead (K)">+ Key</button>
     <button id="btnDelKey" class="btn" title="Delete selected keyframe (Backspace)">- Key</button>

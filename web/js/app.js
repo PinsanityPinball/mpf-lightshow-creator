@@ -310,6 +310,30 @@ class App {
     return null;
   }
 
+  /**
+   * The keyframe a right-drag should edit: the one under the playhead, made if
+   * it is not there yet. This is what auto-key used to do on every drag.
+   */
+  keyForEdit(layer) {
+    if (!layer.keys.length) {
+      layer.keys.push(makeKey(0));
+      invalidateKeys(layer);
+    }
+    const at = this.keyAtPlayhead(layer);
+    if (at !== null) { this.selectedKeyIndex = at; return layer.keys[at]; }
+    const u = this.layerPhase(layer);
+    if (u === null) {
+      return layer.keys[Math.min(this.selectedKeyIndex, layer.keys.length - 1)];
+    }
+    const fresh = makeKey(u, stateAt(layer, u));
+    fresh.t = u;
+    layer.keys.push(fresh);
+    layer.keys.sort((a, b) => a.t - b.t);
+    invalidateKeys(layer);
+    this.selectedKeyIndex = layer.keys.indexOf(fresh);
+    return fresh;
+  }
+
   targetKey(layer) {
     if (!layer.keys.length) {
       layer.keys.push(makeKey(0));
@@ -497,12 +521,11 @@ class App {
   updateKeyHint() {
     const btn = document.getElementById('btnAddKey');
     if (!btn) return;
-    const want = !this.autoKey && !!this.selectedLayer();
-    btn.classList.toggle('attention', want);
-    btn.title = want
-      ? 'Add a keyframe at the playhead (K). Auto-key is off, so changes edit '
-        + 'the selected keyframe until you add another.'
-      : 'Add a keyframe at the playhead (K)';
+    // The button no longer needs to shout: a right-drag on the shape makes the
+    // keyframe for you, so this is a shortcut rather than the only way in.
+    btn.classList.remove('attention');
+    btn.title = 'Add a keyframe at the playhead (K). Right-dragging the shape '
+      + 'also makes one there.';
   }
 
   rebuildHeads() {
@@ -1195,6 +1218,64 @@ class App {
   }
 
   /** What a preset needs to know about the loaded map to configure itself. */
+  /** Everything the mouse and keyboard do, in one place. */
+  shortcutsDialog() {
+    const rows = (title, items) => {
+      const box = el('div', {}, [el('div', { class: 'sec', text: title })]);
+      const grid = el('div', { class: 'keys-grid' });
+      for (const [k, what] of items) {
+        grid.appendChild(el('kbd', { text: k }));
+        grid.appendChild(el('span', { text: what }));
+      }
+      box.appendChild(grid);
+      return box;
+    };
+
+    const body = el('div', { class: 'keys' }, [
+      rows('On the playfield', [
+        ['Left-drag', 'Move the whole layer - every keyframe together'],
+        ['Right-drag', 'Move the keyframe at the playhead, making one if needed'],
+        ['Drag blue handle', 'Resize (left: whole layer, right: this keyframe)'],
+        ['Drag orange handle', 'Rotate (left: whole layer, right: this keyframe)'],
+        ['Shift + rotate', 'Snap to 15 degrees'],
+        ['Shift + resize', 'Keep it square'],
+        ['Click a light', 'Pin it, to watch its colour'],
+      ]),
+      rows('Timeline', [
+        ['Drag a clip', 'Move it in time'],
+        ['Drag clip ends', 'Make it longer or shorter'],
+        ['Drag a diamond', 'Retime that keyframe'],
+        ['Double-click a clip', 'Add a keyframe there'],
+        ['Double-click a name', 'Rename the layer'],
+        ['Alt + drag', 'Ignore frame snapping'],
+        ['Wheel', 'Scroll'],
+        ['Shift + wheel', 'Pan'],
+        ['Ctrl + wheel', 'Zoom'],
+      ]),
+      rows('Keys', [
+        ['Space', 'Play or pause'],
+        ['Left / Right', 'Step one frame (Shift: ten)'],
+        ['Up / Down', 'Previous or next layer'],
+        ['Home / End', 'Jump to the start or end'],
+        ['K', 'Add a keyframe at the playhead'],
+        ['Backspace', 'Delete the selected keyframe'],
+        ['Delete', 'Delete the selected layer'],
+        ['1 / 2 / 3', 'View: Both, Shapes, Lights'],
+        ['L', 'Toggle lights-only'],
+        ['O', 'Toggle onion skin'],
+        ['?', 'This list'],
+      ]),
+      rows('With Ctrl', [
+        ['Ctrl + Z', 'Undo'],
+        ['Ctrl + Shift + Z', 'Redo'],
+        ['Ctrl + S', 'Save the show'],
+        ['Ctrl + N', 'Add a layer'],
+        ['Ctrl + D', 'Duplicate the layer'],
+      ]),
+    ]);
+    showModal('Shortcuts', body, [button('Close', hideModal, 'primary')]);
+  }
+
   presetContext() {
     return { lights: this.lights, tags: this.tags };
   }
@@ -1460,6 +1541,7 @@ class App {
     });
 
     $('#btnRoll').onclick = () => this.randomLayer();
+    $('#btnHelp').onclick = () => this.shortcutsDialog();
     $('#btnReloadMap').onclick = () => this.reloadLightMap();
     $('#btnNew').onclick = () => this.newShow();
     $('#btnOpen').onclick = () => this.openDialog();
@@ -1590,6 +1672,7 @@ class App {
         case 'l': case 'L':
           this.setView(this.view === 'lights' ? 'both' : 'lights');
           break;
+        case '?': this.shortcutsDialog(); break;
         case 'o': case 'O':
           $('#tglOnion').checked = !$('#tglOnion').checked;
           this.onion = $('#tglOnion').checked;

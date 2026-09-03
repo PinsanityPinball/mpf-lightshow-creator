@@ -3,16 +3,18 @@
 
 import { pickFile } from './filebrowser.js';
 import { LAYER_STEPS } from './steps.js';
+import { PRESET_COLOURS } from './presets.js';
 import { SHAPES, SHAPE_BY_ID, shapeDefaults } from './shapes.js';
 import {
   EASE_NAMES, makeKey, invalidateKeys, projectDuration, frameCount, layerEndMs,
   layerFireTimes, setLayerStart,
   animateParam, unanimateParam, effectiveParams,
   setScaleRange, scaleRange, scaleIsUniform, fadeState, setFades,
+  setRotationRange, rotationRange, setColourRange, colourRange,
 } from './project.js';
 import { showCoverage, layerMask } from './render.js';
 import {
-  PATHS, applyPath, TRANSFORMS, randomStart, randomEnd, SIZE_PRESETS, applySize,
+  PATHS, applyPath, pathOptions, TRANSFORMS, randomStart, randomEnd, SIZE_PRESETS, applySize,
   turnsOf, setTurns,
 } from './paths.js';
 import { orderedTargets } from './project.js';
@@ -272,6 +274,7 @@ export class Inspector {
           this.buildLayer();
         }), 'small'),
       ]));
+      this.orientationRow(root, layer, edit, def);
     }
 
   }
@@ -457,25 +460,102 @@ export class Inspector {
     }
   }
 
+  /**
+   * Which way the shape faces. Motion has the full start/end pair for spinning
+   * it; this is the "turn it a quarter" case, which is what you want while
+   * you are still choosing the shape rather than animating it.
+   */
+  orientationRow(root, layer, edit, def) {
+    if (def && def.symmetric) return;      // a circle looks the same at every angle
+    const app = this.app;
+    const r = rotationRange(layer);
+    const spins = Math.abs(r.to - r.from) > 0.01;
+
+    root.appendChild(section('Orientation'));
+    const turn = (deg) => edit(`turn ${deg}`, () => {
+      // shift both ends, so a layer that spins keeps spinning by the same amount
+      setRotationRange(layer, r.from + deg, r.to + deg);
+      this.buildLayer();
+    });
+    root.appendChild(el('div', { class: 'btn-row' }, [
+      button('↺ 90°', () => turn(-90), 'small'),
+      button('↻ 90°', () => turn(90), 'small'),
+      button('Upright', () => edit('upright', () => {
+        setRotationRange(layer, 0, spins ? r.to - r.from : 0);
+        this.buildLayer();
+      }), 'small'),
+    ]));
+    root.appendChild(slider('Angle', r.from, { min: -180, max: 180, step: 1 }, (v) => {
+      app.pushUndo('angle', `${layer.id}:angle`);
+      const cur = rotationRange(layer);
+      setRotationRange(layer, v, v + (cur.to - cur.from));
+      app.onProjectEdit({ light: true });
+    }));
+    root.appendChild(hint(spins
+      ? `Starts at ${Math.round(r.from)}° and turns to ${Math.round(r.to)}°. `
+        + 'The buttons turn the whole spin, keeping it the same length. Motion is '
+        + 'where you change how far it spins.'
+      : `Facing ${Math.round(r.from)}°. Motion is where you make it spin.`));
+  }
+
   panePath(root, layer, edit) {
     const app = this.app;
+    // Remembered per layer for the session. The path bakes into keyframes, so
+    // these only matter while you are tuning it - but the panel used to apply
+    // every path at hardcoded defaults with no way to shape it, which meant the
+    // wizard could make paths the panel could not.
+    this.pathState = this.pathState || {};
+    const state = this.pathState[layer.id] || (this.pathState[layer.id] = {
+      id: null, opts: pathOptions({ aspect: app.project.aspect || 0.5 }),
+    });
+    const pointsFor = (id) => (id === 'diagonal' || id === 'sweep-up' ? 2
+      : (id === 'sides' ? 4 : 24));
+    const apply = (id) => {
+      state.id = id;
+      applyPath(layer, id, Object.assign({}, state.opts, {
+        aspect: app.project.aspect || 0.5,
+        points: pointsFor(id),
+      }));
+      app.selectKey(0);
+      this.app.refreshInspector();
+    };
+
     root.appendChild(section('Motion path'));
     const pathRow = el('div', { class: 'btn-row' });
     for (const p of PATHS) {
-      pathRow.appendChild(button(p.label, () => edit('path: ' + p.label, () => {
-        applyPath(layer, p.id, {
-          aspect: app.project.aspect || 0.5,
-          points: p.id === 'diagonal' || p.id === 'sweep-up' ? 2
-            : (p.id === 'sides' ? 4 : 24),
-        });
-        app.selectKey(0);
-        this.app.refreshInspector();
-      }), 'small'));
+      pathRow.appendChild(button(p.label, () => edit('path: ' + p.label, () => apply(p.id)),
+        'small' + (state.id === p.id ? ' on' : '')));
     }
     root.appendChild(pathRow);
     root.appendChild(hint('A path rewrites only where the shape goes. Colour, size, '
       + 'rotation and any animated shape params are resampled, so the rest of your '
       + 'setup survives.'));
+
+    // Only the settings this path reads, same as the wizard offers.
+    if (state.id && state.id !== 'none') {
+      const def = PATHS.find((p) => p.id === state.id);
+      const uses = (def && def.uses) || [];
+      const o = state.opts;
+      const re = () => edit('path settings', () => apply(state.id));
+      const opt = (name, label, spec, key) => {
+        if (!uses.includes(name)) return;
+        root.appendChild(slider(label, o[key || name], spec, (v) => {
+          o[key || name] = v;
+          re();
+        }));
+      };
+      root.appendChild(section('Path settings'));
+      opt('r', 'Size', { min: 0.05, max: 0.8, step: 0.01 });
+      opt('turns', (def && def.turnLabel) || 'Loops', { min: 1, max: 8, step: 1 });
+      opt('overshoot', 'Off-screen margin', { min: 0, max: 0.5, step: 0.01 });
+      if (uses.includes('inward')) {
+        root.appendChild(el('div', { class: 'btn-row' }, [
+          checkbox('Spiral inwards', !!o.inward, (v) => { o.inward = v; re(); }),
+        ]));
+      }
+      root.appendChild(hint('Changing these lays the path down again from scratch, so '
+        + 'any keyframes you moved by hand since are replaced.'));
+    }
 
     root.appendChild(section('Transform'));
     root.appendChild(el('div', { class: 'btn-row' },
@@ -548,12 +628,74 @@ export class Inspector {
         this.buildLayer();
       })),
     ]));
-    root.appendChild(hint('Double-click a clip in the timeline to add a keyframe. '
-      + 'Drag the shape on the playfield to move it.'));
+    root.appendChild(hint('On the playfield: left-drag moves the whole layer, '
+      + 'right-drag moves the keyframe at the playhead and makes one if there is '
+      + 'not one there. Same for the rotate and scale handles. Double-click a clip '
+      + 'in the timeline to add a keyframe.'));
   }
 
   paneColour(root, layer, edit) {
-    root.appendChild(section('Colour'));
+    const app = this.app;
+    // The pane had no way to pick a colour at all - it named the Keyframe tab
+    // and left you to go and find it. Colours belong on the Colour tab.
+    if (layer.colorMode !== 'rainbow') {
+      const r = colourRange(layer);
+      const same = r.from.toLowerCase() === r.to.toLowerCase();
+
+      const swatches = (current, apply) => {
+        const row = el('div', { class: 'chips' });
+        for (const hex of PRESET_COLOURS) {
+          const chip = el('button', {
+            class: 'chip-swatch' + (hex.toLowerCase() === current.toLowerCase() ? ' on' : ''),
+            title: hex,
+            onclick: () => edit('colour', () => { apply(hex); this.buildLayer(); }),
+          });
+          chip.style.background = hex;
+          row.appendChild(chip);
+        }
+        return row;
+      };
+
+      root.appendChild(section(same ? 'Colour' : 'Start colour'));
+      root.appendChild(swatches(r.from, (hex) => setColourRange(layer, hex,
+        same ? hex : colourRange(layer).to)));
+      root.appendChild(field('Pick', colorInput(r.from,
+        this.live(`${layer.id}:cfrom`, 'colour', (v) => {
+          setColourRange(layer, v, same ? v : colourRange(layer).to);
+        }))));
+
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Changes colour over the clip', !same, (v) => edit('colour change', () => {
+          const cur = colourRange(layer);
+          setColourRange(layer, cur.from,
+            v ? (cur.from.toLowerCase() === '#ffffff' ? '#2060ff' : '#ffffff') : cur.from);
+          this.buildLayer();
+        })),
+      ]));
+
+      if (!same) {
+        root.appendChild(section('End colour'));
+        root.appendChild(swatches(r.to, (hex) => setColourRange(layer,
+          colourRange(layer).from, hex)));
+        root.appendChild(field('Pick', colorInput(r.to,
+          this.live(`${layer.id}:cto`, 'colour', (v) => {
+            setColourRange(layer, colourRange(layer).from, v);
+          }))));
+      }
+
+      if (layer.colorMode === 'gradient') {
+        const k = layer.keys[Math.min(app.selectedKeyIndex, layer.keys.length - 1)];
+        if (k) {
+          root.appendChild(section('Gradient second colour'));
+          root.appendChild(field('Pick', colorInput(k.color2 || '#2040ff',
+            this.live(`${layer.id}:c2`, 'gradient colour', (v) => {
+              for (const key of layer.keys) key.color2 = v;
+            }))));
+        }
+      }
+    }
+
+    root.appendChild(section('How it fills'));
     root.appendChild(field('Fill', selectBox(layer.colorMode, [
       ['solid', 'Solid'], ['gradient', 'Two-colour gradient'], ['rainbow', 'Rainbow'],
     ], (v) => edit('colour mode', () => { layer.colorMode = v; this.buildLayer(); }))));
@@ -567,8 +709,9 @@ export class Inspector {
         this.live(`${layer.id}:hueOffset`, 'hue offset', (v) => { layer.rainbowOffset = v; })));
       root.appendChild(hint('Rainbow ignores the keyframe colours.'));
     } else {
-      root.appendChild(hint('Per-keyframe colours live on the Keyframe tab. '
-        + 'HSL tweening walks around the colour wheel instead of through grey.'));
+      root.appendChild(hint('These set every keyframe at once. The Keyframe tab sets '
+        + 'one keyframe on its own, for a colour that changes more than twice across '
+        + 'the clip. HSL tweening walks the colour wheel instead of through grey.'));
     }
   }
 
@@ -806,7 +949,7 @@ export class Inspector {
 
     root.appendChild(section('Pattern'));
     root.appendChild(field('Type', selectBox(p.type, [
-      ['blink', 'Blink on and off'],
+      ['blink', 'Blink on and off (can pulse too)'],
       ['chase', 'Chase through the lights'],
       ['sparkle', 'Sparkle (random lights)'],
       ['wavy', 'Wave across the lights'],
@@ -821,7 +964,7 @@ export class Inspector {
       ['comet', 'Comet (thrown, bounces)'],
       ['sweep', 'Sweep (tag group by group)'],
       ['interference', 'Interference (two waves beating)'],
-      ['solid', 'Solid colour'],
+      ['solid', 'Solid or pulsing (breathe, heartbeat)'],
     ], (v) => edit('pattern type', () => { p.type = v; this.buildLayer(); }))));
     const FIT_MEANS = {
       stack: 'one complete fill spanning the clip',

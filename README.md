@@ -248,13 +248,15 @@ value.
 **Playfield** — click a shape to select, drag to move. Blue corner handle
 scales, orange handle rotates. Hover a light to see its name and colour.
 
-**What a drag moves.** With auto-key off (the default), dragging moves the
-*whole layer* — every keyframe shifts together and the shape follows your
-pointer exactly. Park the playhead on a keyframe and the drag edits just that
-one instead, which is the precise-editing case. With auto-key on, a drag writes
-to the keyframe under the playhead, creating one if there isn't one. `Shift`
-always moves everything; it also snaps rotation to 15° and keeps scaling
-uniform.
+**The mouse button says what you mean.** **Left-drag** moves the *whole layer* —
+every keyframe shifts together and the shape follows your pointer exactly.
+**Right-drag** moves the keyframe at the playhead, creating one there if it does
+not exist. The same applies to the rotate and scale handles: left resizes or
+turns the whole layer, right does just that keyframe. `Shift` snaps rotation to
+15° and keeps scaling square.
+
+Press **?** or the toolbar's **?** button for the full list of keys and
+gestures.
 
 **Timeline** — drag a clip to move it, drag its ends to retime it. Drag keyframe
 diamonds; double-click a clip to add one. `Alt` disables frame snapping. Wheel

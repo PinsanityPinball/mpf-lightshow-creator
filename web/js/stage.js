@@ -136,7 +136,11 @@ export class Stage {
   // ------------------------------------------------------------ input
 
   onDown(e) {
-    if (e.button !== 0) return;
+    // Left moves the whole layer, right edits one keyframe. Which mouse button
+    // you press is a clearer way to say which you meant than a mode checkbox
+    // plus wherever the playhead happens to be sitting.
+    if (e.button !== 0 && e.button !== 2) return;
+    const wholeLayer = e.button === 0 && !this.app.autoKey;
     this.canvas.setPointerCapture(e.pointerId);
     const { x, y } = this.pointer(e);
     const app = this.app;
@@ -148,13 +152,22 @@ export class Stage {
         const h = this.handlePoints(layer, st);
         if (dist(x, y, h.rotate.x, h.rotate.y) <= HANDLE + 4) {
           app.pushUndo('rotate');
-          this.drag = { mode: 'rotate', layer, startRot: st.rot,
-            startAngle: Math.atan2(y - h.centre.y, x - h.centre.x) / D2R };
+          this.drag = {
+            mode: 'rotate', layer, startRot: st.rot,
+            all: wholeLayer,
+            baseRot: layer.keys.map((k) => k.rot),
+            startAngle: Math.atan2(y - h.centre.y, x - h.centre.x) / D2R,
+          };
           return;
         }
         if (dist(x, y, h.scale.x, h.scale.y) <= HANDLE + 4) {
           app.pushUndo('scale');
-          this.drag = { mode: 'scale', layer, ext: h.ext };
+          this.drag = {
+            mode: 'scale', layer, ext: h.ext,
+            all: wholeLayer,
+            baseScale: layer.keys.map((k) => ({ sx: k.sx, sy: k.sy })),
+            startSx: st.sx || 1, startSy: st.sy || 1,
+          };
           return;
         }
       }
@@ -164,26 +177,25 @@ export class Stage {
     if (hit) {
       if (!layer || hit.id !== layer.id) app.selectLayer(hit.id);
       const st = this.liveState(hit);
-      // pushUndo first: with auto-key on, targetKey() inserts a keyframe, and a
+      // pushUndo first: a right-drag inserts a keyframe through targetKey, and a
       // snapshot taken after that already contains it, so undo could not remove it
       app.pushUndo('move');
-      const key = app.targetKey(hit);
-      // Dragging a shape should move the shape. With auto-key off and the
-      // playhead between keyframes there is no single keyframe the drag
-      // obviously belongs to, so it moves the whole layer and the shape follows
-      // the pointer exactly. Parked on a keyframe, or with auto-key on, the
-      // drag edits that one keyframe as before. Shift always moves everything.
-      const onKey = app.keyAtPlayhead(hit) !== null;
-      const moveAll = e.shiftKey || (!app.autoKey && !onKey);
+      // Right button (or auto-key) edits the keyframe at the playhead, creating
+      // one if there is not one there yet. Left moves the whole layer.
+      const key = wholeLayer ? null : app.keyForEdit(hit);
       this.drag = {
         mode: 'move',
         layer: hit,
-        all: moveAll,
+        all: wholeLayer,
         grabX: x / this.cw - (st ? st.x : 0.5),
         grabY: y / this.ch - (st ? st.y : 0.5),
         baseKeys: hit.keys.map((k) => ({ x: k.x, y: k.y })),
-        baseX: key ? key.x : 0.5,
-        baseY: key ? key.y : 0.5,
+        // The whole-layer delta is measured from where the shape actually is,
+        // not from a keyframe: with no key to read it fell back to 0.5, so the
+        // delta came out wrong - and for a shape sitting at 0.3 dragged 0.2, it
+        // came out as exactly zero and the layer did not move at all.
+        baseX: key ? key.x : (st ? st.x : 0.5),
+        baseY: key ? key.y : (st ? st.y : 0.5),
       };
       return;
     }
@@ -245,10 +257,16 @@ export class Stage {
       const st = this.liveState(layer) || stateAt(layer, 0);
       const c = this.toScreen(st, 0, 0);
       const ang = Math.atan2(y - c.y, x - c.x) / D2R;
-      let rot = d.startRot + (ang - d.startAngle);
-      if (e.shiftKey) rot = Math.round(rot / 15) * 15;
-      const key = app.targetKey(layer);
-      if (key) key.rot = Math.round(rot * 10) / 10;
+      let delta = ang - d.startAngle;
+      if (e.shiftKey) {
+        delta = Math.round((d.startRot + delta) / 15) * 15 - d.startRot;
+      }
+      if (d.all) {
+        layer.keys.forEach((k, i) => { k.rot = Math.round((d.baseRot[i] + delta) * 10) / 10; });
+      } else {
+        const key = app.keyForEdit(layer);
+        if (key) key.rot = Math.round((d.startRot + delta) * 10) / 10;
+      }
     } else if (d.mode === 'scale') {
       const st = this.liveState(layer) || stateAt(layer, 0);
       // px/py are the rotated offsets in screen pixels, before the size divide
@@ -256,10 +274,19 @@ export class Stage {
       let sx = Math.abs(l.px) / (d.ext * this.cw);
       let sy = Math.abs(l.py) / (d.ext * this.cw);
       if (e.shiftKey) { const m = Math.max(sx, sy); sx = m; sy = m; }
-      const key = app.targetKey(layer);
-      if (key) {
-        key.sx = Math.max(0.005, Math.round(sx * 1000) / 1000);
-        key.sy = Math.max(0.005, Math.round(sy * 1000) / 1000);
+      const clean = (v) => Math.max(0.005, Math.round(v * 1000) / 1000);
+      if (d.all) {
+        // scale every keyframe by the same factor, so a layer that grows keeps
+        // growing rather than being flattened to one size
+        const fx = sx / Math.max(0.005, d.startSx);
+        const fy = sy / Math.max(0.005, d.startSy);
+        layer.keys.forEach((k, i) => {
+          k.sx = clean(d.baseScale[i].sx * fx);
+          k.sy = clean(d.baseScale[i].sy * fy);
+        });
+      } else {
+        const key = app.keyForEdit(layer);
+        if (key) { key.sx = clean(sx); key.sy = clean(sy); }
       }
     }
 
