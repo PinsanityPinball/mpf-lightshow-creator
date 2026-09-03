@@ -294,7 +294,8 @@ export class ShowRenderer {
     const offsets = sampleOffsets(radius);
     const total = offsets.length / 2;
     const alphaScale = Math.max(0, Math.min(1, st.alpha));
-    const additive = layer.blend !== 'normal';
+    const erasing = layer.blend === 'erase';
+    const additive = !erasing && layer.blend !== 'normal';
     const accum = this.accum;
 
     // Read a small tile around each light rather than the whole layer bounding
@@ -331,7 +332,13 @@ export class ShowRenderer {
 
       const cov = (sa / total) * alphaScale;
       const j = i * 3;
-      if (additive) {
+      if (erasing) {
+        // An eraser turns lights off wherever it covers them. Its own colour is
+        // irrelevant - only how much of the light it covers matters - and it
+        // only affects layers below it, since accumulation runs in layer order.
+        const keep = 1 - cov;
+        accum[j] *= keep; accum[j + 1] *= keep; accum[j + 2] *= keep;
+      } else if (additive) {
         // premultiplied average over the sample disc
         accum[j] += (sr / total) * alphaScale;
         accum[j + 1] += (sg / total) * alphaScale;
@@ -349,7 +356,8 @@ export class ShowRenderer {
     target.save();
     target.setTransform(1, 0, 0, 1, 0, 0);
     target.globalAlpha = alphaScale;
-    target.globalCompositeOperation = additive ? 'lighter' : 'source-over';
+    target.globalCompositeOperation = erasing ? 'destination-out'
+      : (additive ? 'lighter' : 'source-over');
     target.drawImage(this.scratch, bx, by, bw, bh, bx, by, bw, bh);
     target.restore();
     return true;
@@ -423,7 +431,8 @@ export class ShowRenderer {
     const mask = layerMask(layer, lights);
     const alphaScale = st ? Math.max(0, Math.min(1, st.alpha)) : 1;
     if (alphaScale <= 0) return false;
-    const additive = layer.blend !== 'normal';
+    const erasing = layer.blend === 'erase';
+    const additive = !erasing && layer.blend !== 'normal';
     const accum = this.accum;
     const base = frame * resolved.stride;
 
@@ -436,7 +445,12 @@ export class ShowRenderer {
       const g = toLin[resolved.data[p + 1]] * alphaScale;
       const b = toLin[resolved.data[p + 2]] * alphaScale;
       const k = j * 3;
-      if (additive) {
+      if (erasing) {
+        // brightness of the imported show decides how hard it erases
+        const lum = Math.max(r, g, b);
+        const keep = 1 - Math.max(0, Math.min(1, lum));
+        accum[k] *= keep; accum[k + 1] *= keep; accum[k + 2] *= keep;
+      } else if (additive) {
         accum[k] += r; accum[k + 1] += g; accum[k + 2] += b;
       } else {
         const inv = 1 - alphaScale;
@@ -477,12 +491,19 @@ export class ShowRenderer {
     if (alphaScale <= 0) return false;
 
     const mask = layerMask(layer, lights);
-    const additive = layer.blend !== 'normal';
+    const erasing = layer.blend === 'erase';
+    const additive = !erasing && layer.blend !== 'normal';
     const accum = this.accum;
 
     const put = (lightIndex, hex, gain) => {
       const c = hexToRgb(hex);
       const k = lightIndex * 3;
+      if (erasing) {
+        // the pattern's shape decides which lights go off, not its colour
+        const keep = 1 - Math.max(0, Math.min(1, alphaScale * gain));
+        accum[k] *= keep; accum[k + 1] *= keep; accum[k + 2] *= keep;
+        return;
+      }
       const r = toLin[c.r] * alphaScale * gain;
       const g = toLin[c.g] * alphaScale * gain;
       const b = toLin[c.b] * alphaScale * gain;

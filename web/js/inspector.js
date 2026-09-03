@@ -461,7 +461,14 @@ export class Inspector {
     root.appendChild(section('Blend'));
     root.appendChild(field('Mode', selectBox(layer.blend, [
       ['add', 'Add (lights stack)'], ['normal', 'Normal (covers)'],
-    ], (v) => edit('blend', () => { layer.blend = v; }))));
+      ['erase', 'Erase (turns lights off)'],
+    ], (v) => edit('blend', () => { layer.blend = v; this.buildLayer(); }))));
+    if (layer.blend === 'erase') {
+      root.appendChild(hint('Erase does not light anything. Wherever it covers a light it switches '
+        + 'that light off, so it only affects layers below it in the list. Use it '
+        + 'to punch a moving hole in something, or to hold a group dark while the '
+        + 'rest of the show runs.'));
+    }
   }
 
   /**
@@ -972,7 +979,14 @@ export class Inspector {
     root.appendChild(field('Mode', selectBox(layer.blend, [
       ['add', 'Add (stacks with other layers)'],
       ['normal', 'Normal (overrides what is under it)'],
-    ], (v) => edit('blend', () => { layer.blend = v; }))));
+      ['erase', 'Erase (turns lights off)'],
+    ], (v) => edit('blend', () => { layer.blend = v; this.buildLayer(); }))));
+    if (layer.blend === 'erase') {
+      root.appendChild(hint('Erase does not light anything. Wherever it covers a light it switches '
+        + 'that light off, so it only affects layers below it in the list. Use it '
+        + 'to punch a moving hole in something, or to hold a group dark while the '
+        + 'rest of the show runs.'));
+    }
 
     root.appendChild(section('Timing'));
     root.appendChild(field('Start (ms)', numberInput(layer.startMs, 0, 600000, 10,
@@ -1051,7 +1065,14 @@ export class Inspector {
     root.appendChild(section('Playback'));
     root.appendChild(field('Blend', selectBox(layer.blend, [
       ['add', 'Add (stacks with other layers)'], ['normal', 'Normal (overrides)'],
-    ], (v) => edit('blend', () => { layer.blend = v; }))));
+      ['erase', 'Erase (turns lights off)'],
+    ], (v) => edit('blend', () => { layer.blend = v; this.buildLayer(); }))));
+    if (layer.blend === 'erase') {
+      root.appendChild(hint('Erase does not light anything. Wherever it covers a light it switches '
+        + 'that light off, so it only affects layers below it in the list. Use it '
+        + 'to punch a moving hole in something, or to hold a group dark while the '
+        + 'rest of the show runs.'));
+    }
     root.appendChild(field('Start (ms)', numberInput(layer.startMs, 0, 600000, 1,
       (v) => edit('start', () => { layer.startMs = v; }))));
     root.appendChild(field('Length (ms)', numberInput(layer.durationMs, 16, 600000, 1,

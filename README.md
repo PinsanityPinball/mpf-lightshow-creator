@@ -28,6 +28,8 @@ shapes, a real timeline, light patterns and direct manipulation.
   turns, so a pie chart that fills is one layer
 - **Motion paths** — circle, infinity, spiral, zig-zag, bounce and more, applied
   in one click, plus transforms and randomisers
+- **Blend modes** — add, normal, or *erase*, which switches lights off wherever
+  a layer reaches
 - **Step-by-step wizard** with a live preview, or full manual control
 
 **Light patterns** — no shape, no sampling, exact colours straight to your lights
@@ -131,6 +133,13 @@ repeat, ping-pong — and comes in one of three kinds:
 
 Only shape layers have geometry on the playfield. The other two contribute
 colours directly, so use the *Lights* or *Both* view to see them.
+
+Each layer has a **blend mode**: *Add* stacks it with everything else, *Normal*
+covers what is under it, and *Erase* turns lights **off** wherever it reaches.
+An eraser lights nothing of its own — its colour is irrelevant, only its shape
+matters — and it affects only layers below it in the list, so you can punch a
+moving hole in a wash or hold one group dark while the rest of the show runs.
+Any layer kind can erase.
 
 **+ Add layer** (or `Ctrl+N`) offers four routes: start from a preset, build it
 step by step with the wizard, import an MPF show, or roll a random one.

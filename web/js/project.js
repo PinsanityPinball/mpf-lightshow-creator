@@ -125,7 +125,7 @@ export function makeLayer(over = {}) {
     name: 'Layer',
     enabled: true,
     kind: 'shape',     // shape | show | pattern
-    blend: 'add',
+    blend: 'add',            // add | normal | erase
     target: makeTarget(over.target),
     shapeId,
     shapeParams: shapeDefaults(shapeId),

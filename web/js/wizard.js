@@ -43,21 +43,36 @@ export class Wizard {
     this.playing = true;
     this.previewT = 0;
 
-    this.steps = [
-      { id: 'shape', title: 'Shape', build: (b) => this.stepShape(b) },
-      { id: 'path', title: 'Path', build: (b) => this.stepPath(b) },
-      { id: 'motion', title: 'Motion', build: (b) => this.stepMotion(b) },
-      { id: 'size', title: 'Size', build: (b) => this.stepSize(b) },
-      { id: 'colour', title: 'Colour', build: (b) => this.stepColour(b) },
-      { id: 'lights', title: 'Lights', build: (b) => this.stepLights(b) },
-      { id: 'timing', title: 'Timing', build: (b) => this.stepTiming(b) },
-    ];
+    this.steps = this.buildSteps();
+  }
+
+  /**
+   * Order and titles come from LAYER_STEPS, which the Layer panel's sub-tabs are
+   * built from too, so the two cannot drift apart. Only the builders here are
+   * wizard-specific. Rebuilt on every open rather than cached in the
+   * constructor: the wizard instance outlives a single use, so a cached list
+   * would be the one thing that could still go out of step.
+   */
+  buildSteps() {
+    const BUILD = {
+      shape: (b) => this.stepShape(b),
+      path: (b) => this.stepPath(b),
+      motion: (b) => this.stepMotion(b),
+      size: (b) => this.stepSize(b),
+      colour: (b) => this.stepColour(b),
+      lights: (b) => this.stepLights(b),
+      timing: (b) => this.stepTiming(b),
+    };
+    return LAYER_STEPS
+      .filter((s) => BUILD[s.id])
+      .map((s) => ({ id: s.id, title: s.title, build: BUILD[s.id] }));
   }
 
   // ------------------------------------------------------------ lifecycle
 
   open() {
     const app = this.app;
+    this.steps = this.buildSteps();
     this.step = 0;
     this.layer = makeLayer({
       name: 'New layer',
@@ -602,6 +617,7 @@ export class Wizard {
     ]));
     c.appendChild(field('Blend', selectBox(L.blend, [
       ['add', 'Add (lights stack)'], ['normal', 'Normal (covers)'],
+      ['erase', 'Erase (turns lights off)'],
     ], (v) => { L.blend = v; })));
     c.appendChild(hint(`Runs ${L.startMs} to `
       + `${L.startMs + L.durationMs * Math.max(1, L.repeat || 1)} ms.`));
