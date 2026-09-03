@@ -9,8 +9,8 @@
 
 import { el, button, showModal, hideModal, api } from './ui.js';
 
-const ICON = { map: '◉', tags: '▤', both: '◈', yaml: '·' };
-const KIND_LABEL = { map: 'light map', tags: 'tags', both: 'map + tags', yaml: '' };
+const ICON = { map: '◉', tags: '▤', both: '◈', yaml: '·', show: '▸' };
+const KIND_LABEL = { map: 'light map', tags: 'tags', both: 'map + tags', yaml: '', show: 'show' };
 
 /**
  * Open the browser. Resolves to an absolute file path, or null if cancelled.
@@ -43,6 +43,8 @@ export function pickFile(opts = {}) {
         + 'Likely matches are highlighted, but any YAML can be chosen.',
       folder: 'Open the folder you want, then use it. Your MPF machine folder is '
         + 'the one containing config/ - shows go into its shows/ subfolder.',
+      show: 'Pick a saved show (.json). It stays where it is - saving writes '
+        + 'back to the same file, not into the app folder.',
       any: 'Pick a YAML file.',
     };
     const body = el('div', { class: 'fb' }, [
@@ -128,7 +130,8 @@ export function pickFile(opts = {}) {
           class: 'fb-empty',
           text: data.atRoot ? 'Nothing to show.'
             : (folderMode ? 'No subfolders here. You can still use this folder.'
-              : 'No folders or YAML files here.'),
+              : (kind === 'show' ? 'No folders or saved shows here.'
+                : 'No folders or YAML files here.')),
         }));
       }
     }

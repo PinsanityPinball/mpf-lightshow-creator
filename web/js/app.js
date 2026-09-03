@@ -73,6 +73,7 @@ class App {
     this.undoAt = 0;
     this.dirty = true;
     this.savedName = null;
+    this.savedPath = null;   // set when a show is opened from outside shows/
 
     this.stage = new Stage(this, $('#stage'));
     this.timeline = new Timeline(this, $('#timelineCanvas'), $('#heads'));
@@ -1126,51 +1127,107 @@ class App {
     try {
       const res = await apiPost('/api/show', {
         name: suggestFilename(name).replace(/\.yaml$/, '.json'),
+        // A show opened from disk saves back to where it came from. Renaming
+        // the show does not move the file: the file is the document, and a
+        // rename that silently spawned a second copy would be worse.
+        path: this.savedPath || '',
         project: serialiseProject(this.project),
       });
       this.savedName = res.name;
-      status(`Saved ${res.name}`, 'ok');
+      if (res.external) this.savedPath = res.path;
+      status(res.external ? `Saved to ${shortPath(res.path)}` : `Saved ${res.name}`, 'ok');
     } catch (err) {
       status('Save failed: ' + err.message, 'err');
     }
   }
 
+  /**
+   * Open a saved show.
+   *
+   * Two routes to the same place: the shows/ folder as a quick list, and
+   * "Browse..." for a .json anywhere on disk. Opening off disk keeps the file
+   * where it is - the path is remembered and Save writes back to it, the same
+   * bargain the light map makes.
+   */
   async openDialog() {
     let list = [];
-    try { list = (await api('/api/shows')).shows; } catch (err) { /* shown below */ }
+    let recent = [];
+    try {
+      const res = await api('/api/shows');
+      list = res.shows || [];
+      recent = res.external || [];
+    } catch (err) { /* the empty state below says enough */ }
+
     const body = el('div', { class: 'file-list' });
-    if (!list.length) {
-      body.appendChild(el('div', { class: 'empty', text: 'No saved shows yet.' }));
+    if (!list.length && !recent.length) {
+      body.appendChild(el('div', {
+        class: 'empty',
+        text: 'No saved shows here yet. Browse to open one from anywhere on disk.',
+      }));
     }
     for (const name of list) {
       body.appendChild(el('div', {
-        class: 'file-row',
-        onclick: async () => {
-          try {
-            const res = await api('/api/show?name=' + encodeURIComponent(name));
-            this.pushUndo('open show');
-            this.project = normaliseProject(res.project);
-            this.savedName = name;
-            $('#showName').value = this.project.name;
-            if (this.project.lightMap && $('#lightMap').value !== this.project.lightMap) {
-              $('#lightMap').value = this.project.lightMap;
-              await this.loadLightMap(this.project.lightMap).catch(() => {});
-            }
-            this.selectedLayerId = this.project.layers.length ? this.project.layers[0].id : null;
-            this.selectedKeyIndex = 0;
-            this.timeMs = 0;
-            this.onAspectChange();
-            this.rebuildHeads();
-            this.inspector.refresh();
-            hideModal();
-            status(`Opened ${name}`, 'ok');
-          } catch (err) {
-            status('Open failed: ' + err.message, 'err');
-          }
-        },
+        class: 'file-row', onclick: () => this.openShow(name),
       }, [el('span', { class: 'grow', text: name })]));
     }
-    showModal('Open show', body, [button('Close', hideModal)]);
+    for (const path of recent) {
+      body.appendChild(el('div', {
+        class: 'file-row', title: path, onclick: () => this.openShow(path),
+      }, [
+        el('span', { class: 'grow', text: baseName(path) }),
+        // the folder, not shortPath: that repeats the filename already shown
+        el('span', { class: 'fb-kind', text: this.folderOf(path) }),
+      ]));
+    }
+
+    showModal('Open show', body, [
+      button('Close', hideModal),
+      button('Browse...', () => this.browseForShow(), 'primary'),
+    ]);
+  }
+
+  /** Just the containing folder's name, for labelling a remembered file. */
+  folderOf(path) {
+    const parts = String(path || '').split(/[\\/]/).filter(Boolean);
+    return parts.length > 1 ? parts[parts.length - 2] : '';
+  }
+
+  /** "Browse..." from the open dialog: pick a show .json anywhere on disk. */
+  async browseForShow() {
+    const path = await pickFile({
+      title: 'Choose a show', kind: 'show', startAt: this.browseStart(),
+    });
+    if (!path) return this.openDialog();   // cancelled: back to the list
+    await this.openShow(path);
+  }
+
+  /**
+   * Load a show by name (one of ours in shows/) or by absolute path (one
+   * picked off disk). Everything downstream is identical either way.
+   */
+  async openShow(nameOrPath) {
+    try {
+      const res = await api('/api/show?name=' + encodeURIComponent(nameOrPath));
+      this.pushUndo('open show');
+      this.project = normaliseProject(res.project);
+      this.savedName = res.name;
+      this.savedPath = res.path || null;
+      $('#showName').value = this.project.name;
+      if (this.project.lightMap && $('#lightMap').value !== this.project.lightMap) {
+        $('#lightMap').value = this.project.lightMap;
+        await this.loadLightMap(this.project.lightMap).catch(() => {});
+      }
+      this.selectedLayerId = this.project.layers.length ? this.project.layers[0].id : null;
+      this.selectedKeyIndex = 0;
+      this.timeMs = 0;
+      this.onAspectChange();
+      this.rebuildHeads();
+      this.inspector.refresh();
+      hideModal();
+      status(`Opened ${res.name}`, 'ok');
+    } catch (err) {
+      status('Open failed: ' + err.message, 'err');
+    }
   }
 
   newShow() {
@@ -1178,6 +1235,7 @@ class App {
     this.project = makeProject();
     this.project.lightMap = $('#lightMap').value;
     this.savedName = null;
+    this.savedPath = null;
     this.timeMs = 0;
     $('#showName').value = this.project.name;
     this.selectedLayerId = null;          // a new show starts with no layers

@@ -119,6 +119,52 @@ def external_yaml(name):
     return full if os.path.isfile(full) else None
 
 
+def external_project(name):
+    """An absolute path to a show project (.json) the user picked, or None.
+
+    Same rules as external_yaml: absolute, local drive, must already exist.
+    Kept separate rather than adding an extension argument, because the two
+    have different callers and a mistake that let a .json through the light-map
+    door would be a real hole rather than a typo.
+    """
+    if not name:
+        return None
+    try:
+        expanded = os.path.expandvars(os.path.expanduser(unquote(name)))
+    except Exception:
+        return None
+    if not os.path.isabs(expanded):
+        return None
+    if expanded.startswith("\\\\") or expanded.startswith("//"):
+        return None
+    if not expanded.lower().endswith(".json"):
+        return None
+    full = os.path.abspath(expanded)
+    return full if os.path.isfile(full) else None
+
+
+def project_write_path(raw):
+    """Where to save a show that was opened from disk, or None.
+
+    The file itself need not exist yet - saving is allowed to create it - but
+    its folder must, so a typo cannot scatter directories across the disk.
+    """
+    if not raw:
+        return None
+    try:
+        expanded = os.path.expandvars(os.path.expanduser(raw))
+    except Exception:
+        return None
+    if not os.path.isabs(expanded):
+        return None
+    if expanded.startswith("\\\\") or expanded.startswith("//"):
+        return None
+    if not expanded.lower().endswith(".json"):
+        return None
+    full = os.path.abspath(expanded)
+    return full if os.path.isdir(os.path.dirname(full)) else None
+
+
 def lightmap_path(name):
     """Resolve a light map or tag file name to a full path.
 
@@ -853,6 +899,14 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 if os.path.isdir(full):
                     dirs.append({"name": name, "path": full})
+                elif want == "show":
+                    # Opening a saved show means finding a .json, so that is what
+                    # gets listed - YAML here would only be noise, and MPF's own
+                    # show YAML comes in through Import instead.
+                    if not name.lower().endswith(".json"):
+                        continue
+                    files.append({"name": name, "path": full, "kind": "show",
+                                  "mtime": int(os.path.getmtime(full) * 1000)})
                 elif name.lower().endswith((".yaml", ".yml")):
                     kind = "yaml"
                     # sniffing costs a read, so only do it for a sane number
@@ -1106,17 +1160,34 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/shows":
             base = path_for("shows")
             names = sorted(n for n in os.listdir(base) if n.endswith(".json")) if os.path.isdir(base) else []
-            return self.send_json({"shows": names})
+            # Shows opened from elsewhere on disk stay one click away next time,
+            # the same way a picked light map does.
+            return self.send_json({"shows": names,
+                                   "external": prune_external("recentShows")})
 
         if route == "/api/show":
             name = (query.get("name") or [""])[0]
             if not name:
                 return self.send_error_json(400, "name required")
-            path = path_for("shows", name)
+            # A bare name is one of ours in shows/; an absolute path is one the
+            # user picked in the file browser, and is read where it lies.
+            outside = external_project(name)
+            path = outside or path_for("shows", name)
             if not os.path.isfile(path):
                 return self.send_error_json(404, "no such show: %s" % name)
-            with open(path, "r", encoding="utf-8") as fh:
-                return self.send_json({"name": name, "project": json.load(fh)})
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    project = json.load(fh)
+            except ValueError as exc:
+                return self.send_error_json(400, "that file is not a show: %s" % exc)
+            if not isinstance(project, dict) or "layers" not in project:
+                return self.send_error_json(
+                    400, "that .json is not a show - it has no layers")
+            if outside:
+                remember_external("recentShows", path)
+            return self.send_json({"name": os.path.basename(path),
+                                   "path": path if outside else "",
+                                   "project": project})
 
         if route == "/api/showfiles":
             return self.send_json({"files": list_show_files()})
@@ -1196,11 +1267,18 @@ class Handler(SimpleHTTPRequestHandler):
             name = body.get("name") or "untitled"
             if not name.endswith(".json"):
                 name += ".json"
-            path = path_for("shows", name)
+            # Save means "save back to the file you opened". Without this a show
+            # opened from disk would quietly land in the app's shows/ folder and
+            # the file on disk would stay stale.
+            outside = project_write_path(body.get("path") or "")
+            path = outside or path_for("shows", name)
             ensure_dirs()
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(body.get("project", {}), fh, indent=1)
-            return self.send_json({"ok": True, "name": name, "path": path})
+            if outside:
+                remember_external("recentShows", path)
+            return self.send_json({"ok": True, "name": os.path.basename(path),
+                                   "path": outside or "", "external": bool(outside)})
 
         if route == "/api/show-delete":
             name = body.get("name") or ""
