@@ -704,3 +704,29 @@ Supported shapes for display: `circle` (default), `square`, `rectangle`,
   they are invisible in the *Shapes* view. Use *Lights* or *Both* to see them.
 - Sampling walks layers one at a time rather than reading one composited frame.
   That is what makes linear accumulation, tag masks and show layers possible.
+
+---
+
+## Credits
+
+This is a rebuild of the original BlitzMax show creator by **Mark Incitti**:
+
+> <https://github.com/missionpinball/showcreator>
+
+That tool established the core idea this one is built on — draw shapes over a
+playfield, sample what each LED sees, write an MPF show — and was the reference
+throughout. If you are running MPF and want the original, it is still there.
+
+The 31 PNGs in `shapes/` are Mark's, used with his permission. See
+[`shapes/README.md`](shapes/README.md).
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE). Use it, change it, ship it; just keep the
+copyright notice, and note there is no warranty.
+
+**One exception:** the shape images in `shapes/` are not covered by the MIT
+grant. They come from the original repository, which carries no licence of its
+own, and are included here by permission rather than by licence. If you
+redistribute a fork, either seek permission separately or delete that folder —
+the built-in shapes are drawn in code and do not depend on it.
