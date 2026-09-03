@@ -68,7 +68,13 @@ function outlineWidth(p, fallback = 0.08) {
 
 /** True when the shape should be drawn as an outline. */
 function isOutline(p) {
-  return p.filled === false || p.hollow > 0;
+  // The Filled checkbox is the answer whenever the shape has one. Treating a
+  // non-zero `hollow` as "also outline" made the checkbox one-way: once you had
+  // set an outline width you could never fill the shape again, because hollow
+  // stayed above zero and kept forcing the outline branch. hollow is only a
+  // width now - it decides how thick the outline is, not whether there is one.
+  if (p.filled !== undefined) return p.filled === false;
+  return p.hollow > 0;   // older shapes and saved layers with no filled flag
 }
 
 export const SHAPES = [

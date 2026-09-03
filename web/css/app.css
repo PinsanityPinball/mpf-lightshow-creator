@@ -693,3 +693,21 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fb-chosen.on { color: var(--fg); border-color: var(--accent); }
+
+/* ---- advanced options fold --------------------------------------------- */
+.wiz-adv {
+  display: flex; align-items: center; gap: 6px;
+  background: none; border: 0; color: var(--fg-dim); cursor: pointer;
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 10px 0 6px; width: 100%; text-align: left;
+}
+.wiz-adv:hover { color: var(--fg); }
+.wiz-adv.on { color: var(--accent); }
+.wiz-adv-arrow { font-size: 9px; }
+
+/* a range row with no end half should not reserve the space for one */
+.wiz-range-pair.single { grid-template-columns: 1fr; }
+
+/* An explicit `display` on a class beats the browser's own [hidden] rule, so
+   el.hidden silently did nothing on flex/grid children. This restores it. */
+[hidden] { display: none !important; }

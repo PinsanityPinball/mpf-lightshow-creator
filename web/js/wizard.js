@@ -10,6 +10,7 @@ import {
   makeLayer, makeKey, invalidateKeys, EASE_NAMES,
   setParamRange, paramRange, setScaleRange, scaleRange, scaleIsUniform,
   setColourRange, colourRange, setRotationRange, rotationRange,
+  fadeState, setFades,
 } from './project.js';
 import {
   PATHS, applyPath, pathOptions, pathExtent, TRANSFORMS, randomStart, randomEnd,
@@ -196,11 +197,54 @@ export class Wizard {
     parent.appendChild(row);
   }
 
+  /**
+   * The full controls for a step, folded away behind a toggle.
+   *
+   * Every step used to show its whole control set at once, which made the
+   * wizard read as a wall of sliders when the point of it is the handful of
+   * obvious choices above. The detail is still one click away, and whether it
+   * is open is remembered per step for as long as the wizard is open, so
+   * anyone who wants it does not have to keep reopening it.
+   */
   custom(parent, label) {
-    parent.appendChild(el('div', { class: 'wiz-custom-label', text: label || 'Fine tuning' }));
-    const box = el('div', { class: 'wiz-custom' });
+    const key = this.steps[this.step].id;
+    this.advancedOpen = this.advancedOpen || {};
+    const open = !!this.advancedOpen[key];
+
+    const box = el('div', { class: 'wiz-custom' + (open ? '' : ' hidden') });
+    const arrow = el('span', { class: 'wiz-adv-arrow', text: open ? '\u25be' : '\u25b8' });
+    const toggle = el('button', {
+      class: 'wiz-adv' + (open ? ' on' : ''),
+      onclick: () => {
+        const now = !this.advancedOpen[key];
+        this.advancedOpen[key] = now;
+        box.classList.toggle('hidden', !now);
+        toggle.classList.toggle('on', now);
+        arrow.textContent = now ? '\u25be' : '\u25b8';
+      },
+      // One label everywhere. People go looking for "advanced", not for
+      // "Colour settings", and a control that reads the same on every step is
+      // easier to learn once and then ignore.
+    }, [arrow, el('span', { text: 'Advanced options' })]);
+
+    parent.appendChild(toggle);
     parent.appendChild(box);
     return box;
+  }
+
+  /**
+   * The layer's easing, offered on every step that animates something. It is
+   * one setting shown in several places, not one per property - you are asking
+   * "how should this move", and that question belongs next to whatever you are
+   * currently adjusting rather than only on the Motion step.
+   */
+  easingRow(box) {
+    const L = this.layer;
+    const cur = (L.keys[0] && L.keys[0].ease) || 'linear';
+    box.appendChild(field('Easing', selectBox(cur, EASE_NAMES, (v) => {
+      for (const k of L.keys) k.ease = v;
+      this.render();
+    }), { title: 'How the layer moves between keyframes. Shared by every step.' }));
   }
 
   // ------------------------------------------------------------ steps
@@ -259,13 +303,10 @@ export class Wizard {
         c.appendChild(this.rangeRow(p.label, p, paramRange(L, p.key),
           (from, to) => setParamRange(L, p.key, from, to)));
       }
+      this.easingRow(c);
     }
   }
 
-  /**
-   * A start/end pair for one value. Leaving both the same keeps it static;
-   * changing either end turns it into an animation over the clip.
-   */
   /** Start/end pair. Shared with the Layer panel so both look identical. */
   rangeRow(label, spec, current, apply) {
     return rangeRow(label, spec, current, apply,
@@ -286,17 +327,39 @@ export class Wizard {
       label: p.label, on: this.pathId === p.id, pick: () => apply(p.id),
     })));
 
-    const c = this.custom(b, 'Path settings');
+    const c = this.custom(b, 'Advanced options');
     const o = this.pathOpts;
     const re = () => { if (this.pathId) apply(this.pathId); };
-    c.appendChild(slider('Centre X', o.cx, { min: 0, max: 1, step: 0.01 }, (v) => { o.cx = v; re(); }));
-    c.appendChild(slider('Centre Y', o.cy, { min: 0, max: 1, step: 0.01 }, (v) => { o.cy = v; re(); }));
-    c.appendChild(slider('Size', o.r, { min: 0.05, max: 0.8, step: 0.01 }, (v) => { o.r = v; re(); }));
-    c.appendChild(slider('Stretch (taller)', o.stretch, { min: 0.2, max: 4, step: 0.05 },
-      (v) => { o.stretch = v; re(); }));
-    c.appendChild(slider('Loops', o.turns, { min: 1, max: 8, step: 1 }, (v) => { o.turns = v; re(); }));
-    c.appendChild(slider('Off-screen margin', o.overshoot, { min: 0, max: 0.5, step: 0.01 },
-      (v) => { o.overshoot = v; re(); }));
+
+    // Only the controls this path actually reads. A circle ignores Loops and a
+    // straight sweep ignores Size, so showing them invited people to drag a
+    // slider and watch nothing happen.
+    const def = PATHS.find((p) => p.id === this.pathId);
+    const uses = (def && def.uses) || [];
+    const usable = (name) => uses.includes(name);
+
+    if (usable('r')) {
+      c.appendChild(slider('Size', o.r, { min: 0.05, max: 0.8, step: 0.01 },
+        (v) => { o.r = v; re(); }));
+    }
+    if (usable('turns')) {
+      c.appendChild(slider((def && def.turnLabel) || 'Loops', o.turns,
+        { min: 1, max: 8, step: 1 }, (v) => { o.turns = v; re(); }));
+    }
+    if (usable('overshoot')) {
+      c.appendChild(slider('Off-screen margin', o.overshoot, { min: 0, max: 0.5, step: 0.01 },
+        (v) => { o.overshoot = v; re(); }));
+    }
+    if (usable('inward')) {
+      c.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Spiral inwards', !!o.inward, (v) => { o.inward = v; re(); }),
+      ]));
+    }
+    this.easingRow(c);
+    if (this.pathId === 'none') {
+      c.appendChild(hint('A stationary layer has nothing to steer. Pick a path above '
+        + 'to get its settings, or drag the shape on the playfield afterwards.'));
+    }
     c.appendChild(el('div', { class: 'btn-row' }, [
       button('Random start', () => { randomStart(L); invalidateKeys(L); this.render(); }, 'small'),
       button('Random exit', () => { randomEnd(L); invalidateKeys(L); this.render(); }, 'small'),
@@ -313,9 +376,8 @@ export class Wizard {
       }));
       const pct = (v) => Math.round(v * 100);
       c.appendChild(hint(`Covers about ${pct(ext.w)}% of the width and ${pct(ext.h)}% of `
-        + 'the height. The playfield is roughly twice as tall as it is wide, so a '
-        + 'circle that looks round is much shorter than it is wide - raise Stretch to '
-        + 'fill the tall space.'
+        + 'the height. Size means the same on both axes, so at the top of its range '
+        + 'a path reaches the edges of the playfield.'
         + (ext.w > 1.05 || ext.h > 1.05 ? ' Part of this path runs off the playfield.' : '')));
     }
     c.appendChild(hint(`${L.keys.length} keyframes. You can still drag them on the `
@@ -345,8 +407,7 @@ export class Wizard {
     }
     c.appendChild(slider('Rotations', turns, { min: -20, max: 20, step: 0.5 },
       (v) => { setTurns(L, v); }));
-    c.appendChild(field('Easing', selectBox(L.keys[0] ? L.keys[0].ease : 'linear', EASE_NAMES,
-      (v) => { for (const k of L.keys) k.ease = v; })));
+    this.easingRow(c);
     c.appendChild(el('div', { class: 'btn-row' },
       TRANSFORMS.filter((t) => t.id.startsWith('rotate')).map((t) => button(t.label, () => {
         t.apply(L); invalidateKeys(L); this.render();
@@ -401,6 +462,7 @@ export class Wizard {
         }, 'small'),
       ]));
     }
+    this.easingRow(c);
   }
 
   stepColour(b) {
@@ -438,13 +500,19 @@ export class Wizard {
     c.appendChild(field('Tween through', selectBox(L.colorLerp, [
       ['rgb', 'RGB (direct)'], ['hsl', 'HSL (around the wheel)'],
     ], (v) => { L.colorLerp = v; setColourRange(L, r.from, r.to); })));
+    const fades = fadeState(L);
     c.appendChild(el('div', { class: 'btn-row' }, [
-      button('Fade in', () => { L.keys[0].alpha = 0; this.render(); }, 'small'),
-      button('Fade out', () => { L.keys[L.keys.length - 1].alpha = 0; this.render(); }, 'small'),
-      button('Full brightness', () => {
-        for (const k of L.keys) k.alpha = 1; this.render();
-      }, 'small'),
+      checkbox('Fade in', fades.in, (v) => {
+        setFades(L, v, fades.out); this.render();
+      }),
+      checkbox('Fade out', fades.out, (v) => {
+        setFades(L, fades.in, v); this.render();
+      }),
     ]));
+    c.appendChild(hint('Fades ramp the layer up from black at the start and back down '
+      + 'at the end. Turning both on keeps a bright middle rather than leaving the '
+      + 'layer dark the whole way through.'));
+    this.easingRow(c);
   }
 
   stepLights(b) {

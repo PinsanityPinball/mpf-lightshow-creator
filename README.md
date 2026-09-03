@@ -280,6 +280,26 @@ state that greets you, both lead to the same five choices:
 
 ## Building a layer step by step
 
+Each step leads with a few obvious choices. Everything else — every slider,
+every fine adjustment — is folded away behind **Advanced options**, closed by
+default and remembered per step while the wizard is open. The steps were a wall
+of sliders otherwise, which buried the choices that actually matter.
+
+Any setting that can animate shows a single slider and a **changes** toggle.
+Off, it is one value for the whole clip and there is nothing else to look at;
+on, the end slider appears and the value animates from start to end. Shape
+parameters, size and colour all work this way.
+
+**Easing** appears on every step that animates something — Shape, Path, Motion,
+Size and Colour. It is one setting for the layer shown in several places, not a
+separate easing per property: "how should this move" comes up wherever you are
+adjusting, not only on the Motion step.
+
+**Fade in** and **Fade out** are checkboxes, not one-way buttons, so you can
+turn them back off. Turning both on keeps a bright middle — with only the two
+default keyframes a layer would otherwise interpolate from black to black and
+vanish entirely, so a middle keyframe at full brightness is added.
+
 **Wizard** (on the timeline toolbar, and inside + Layer) walks a new layer
 through seven steps, with a live preview of it running against your real light
 map beside every one:
@@ -348,6 +368,19 @@ they have a single panel already and their own one-click presets.
 ---
 
 ## Motion paths, transforms and randomisers
+
+Each path declares which settings it actually reads, and the wizard shows only
+those. A circle has no loops to set and a straight sweep has no size, so those
+sliders are simply absent rather than present and inert. What was one vague
+**Loops** slider is now named for the path it belongs to: *Turns* on a spiral,
+*Zig-zags* on a zig-zag, *Bounces* on a bounce.
+
+**Centre X/Y** and **Stretch** are gone. Position is easier to set by dragging
+the shape on the playfield afterwards, and stretch existed only to work around
+a scaling quirk: the playfield is about twice as tall as it is wide, so a path
+at "size" *r* reached *r* across but only *r*/2 up, and even at maximum size a
+spiral stopped well short of the top edge. Size now means the same thing on both
+axes, so its maximum genuinely reaches the playfield edges.
 
 The **Motion path** section of the Layer tab rewrites where a shape travels:
 circle, infinity, spiral, zig-zag, diagonal, down-and-round, bounce, straight
@@ -478,6 +511,11 @@ colours directly and are visible in the *Lights* view.
 ---
 
 ## Shapes
+
+Shapes with a **Filled** checkbox switch between solid and outline freely. The
+outline-width slider only sets how thick the outline is; it no longer decides
+whether there is one, which previously made the checkbox one-way — once you had
+set a width you could never fill the shape again.
 
 Every shape is drawn as an alpha mask and then tinted, so feathering, gradients
 and rainbow fills work the same way on all of them.

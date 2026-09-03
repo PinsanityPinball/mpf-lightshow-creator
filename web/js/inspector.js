@@ -7,7 +7,7 @@ import { SHAPES, SHAPE_BY_ID, shapeDefaults } from './shapes.js';
 import {
   EASE_NAMES, makeKey, invalidateKeys, projectDuration, frameCount, layerEndMs,
   animateParam, unanimateParam, effectiveParams,
-  setScaleRange, scaleRange, scaleIsUniform,
+  setScaleRange, scaleRange, scaleIsUniform, fadeState, setFades,
 } from './project.js';
 import { showCoverage, layerMask } from './render.js';
 import {
@@ -396,11 +396,16 @@ export class Inspector {
         this.app.refreshInspector();
       }), 'small'),
     ]));
+    const fades = fadeState(layer);
     root.appendChild(el('div', { class: 'btn-row' }, [
-      button('Fade in', () => edit('fade in', () => { layer.keys[0].alpha = 0; }), 'small'),
-      button('Fade out', () => edit('fade out', () => {
-        layer.keys[layer.keys.length - 1].alpha = 0;
-      }), 'small'),
+      checkbox('Fade in', fades.in, (v) => edit('fade in', () => {
+        setFades(layer, v, fades.out);
+        this.buildLayer();
+      })),
+      checkbox('Fade out', fades.out, (v) => edit('fade out', () => {
+        setFades(layer, fades.in, v);
+        this.buildLayer();
+      })),
     ]));
     root.appendChild(hint('Double-click a clip in the timeline to add a keyframe. '
       + 'Drag the shape on the playfield to move it.'));

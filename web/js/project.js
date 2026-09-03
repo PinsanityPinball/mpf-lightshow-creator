@@ -384,6 +384,50 @@ export function scaleIsUniform(layer) {
   return layer.keys.every((k) => Math.abs(k.sx - k.sy) < 1e-6);
 }
 
+/** Whether the layer currently fades up at the start and/or down at the end. */
+export function fadeState(layer) {
+  const keys = layer.keys.slice().sort((a, b) => a.t - b.t);
+  if (!keys.length) return { in: false, out: false };
+  return {
+    in: keys[0].alpha === 0,
+    out: keys[keys.length - 1].alpha === 0,
+  };
+}
+
+/**
+ * Turn the two fades on or off.
+ *
+ * These used to be one-way buttons that each zeroed an end keyframe, which had
+ * two problems: nothing turned a fade back off, and asking for both on a layer
+ * with only the two default keyframes set alpha to 0 at both ends with nothing
+ * in between, so the whole layer interpolated to invisible. Wanting a fade in
+ * and a fade out means wanting a bright middle, so if there is no interior
+ * keyframe to be bright at, one is added.
+ */
+export function setFades(layer, fadeIn, fadeOut) {
+  const keys = layer.keys.slice().sort((a, b) => a.t - b.t);
+  if (!keys.length) return;
+
+  if (fadeIn && fadeOut && keys.length < 3) {
+    const mid = makeKey(0.5, Object.assign({}, stateAt(layer, 0.5), { alpha: 1 }));
+    layer.keys.push(mid);
+    layer.keys.sort((a, b) => a.t - b.t);
+    invalidateKeys(layer);
+  }
+
+  const sorted = layer.keys.slice().sort((a, b) => a.t - b.t);
+  sorted[0].alpha = fadeIn ? 0 : 1;
+  sorted[sorted.length - 1].alpha = fadeOut ? 0 : 1;
+
+  // something between the ends has to reach full brightness, or a layer with
+  // both fades on is dark from end to end
+  const middle = sorted.slice(1, -1);
+  if (middle.length && !middle.some((k) => k.alpha > 0)) {
+    for (const k of middle) k.alpha = 1;
+  }
+  invalidateKeys(layer);
+}
+
 /** Turn from one angle to another across the clip. */
 export function setRotationRange(layer, from, to) {
   spreadByTime(layer, (k, u) => { k.rot = Math.round((from + (to - from) * u) * 100) / 100; });

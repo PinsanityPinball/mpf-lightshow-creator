@@ -1167,7 +1167,7 @@ class App {
           aspect: this.project.aspect || 0.5,
           cx: rand(0.3, 0.7), cy: rand(0.3, 0.7), r: rand(0.2, 0.5),
           rotate: rand(0, Math.PI * 2), turns: 1 + Math.floor(rand(1, 4)),
-          stretch: rand(0.8, 2.6),
+          stretch: rand(0.7, 1.4),   // 1 now means "fills the playfield"
           points: p.id === 'diagonal' || p.id === 'sweep-up' ? 2 : 24,
         });
       } else if (Math.random() < 0.7) {

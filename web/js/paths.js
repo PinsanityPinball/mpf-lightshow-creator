@@ -15,12 +15,14 @@ const TAU = Math.PI * 2;
 export const PATHS = [
   {
     id: 'none',
+    uses: [],
     label: 'None',
     // handled directly in applyPath; it collapses rather than plots a route
     points() { return []; },
   },
   {
     id: 'circle',
+    uses: ['r'],
     label: 'Circle',
     points(n, o) {
       const out = [];
@@ -35,6 +37,7 @@ export const PATHS = [
   },
   {
     id: 'infinity',
+    uses: ['r'],
     label: 'Infinity',
     points(n, o) {
       const out = [];
@@ -51,6 +54,8 @@ export const PATHS = [
   },
   {
     id: 'spiral',
+    uses: ['r', 'turns', 'inward'],
+    turnLabel: 'Turns',
     label: 'Spiral',
     points(n, o) {
       const out = [];
@@ -67,6 +72,8 @@ export const PATHS = [
   },
   {
     id: 'zigzag',
+    uses: ['r', 'turns', 'overshoot', 'down'],
+    turnLabel: 'Zig-zags',
     label: 'Zig-zag',
     points(n, o) {
       const out = [];
@@ -83,6 +90,7 @@ export const PATHS = [
   },
   {
     id: 'diagonal',
+    uses: ['overshoot', 'reverse'],
     label: 'Diagonal',
     points(n, o) {
       const a = o.reverse ? { x: 1 + o.overshoot, y: -o.overshoot }
@@ -94,6 +102,7 @@ export const PATHS = [
   },
   {
     id: 'sides',
+    uses: ['r', 'overshoot'],
     label: 'Down and round',
     points(n, o) {
       // down one edge, across the bottom, back up the other
@@ -106,6 +115,8 @@ export const PATHS = [
   },
   {
     id: 'bounce',
+    uses: ['r', 'turns', 'overshoot'],
+    turnLabel: 'Bounces',
     label: 'Bounce across',
     points(n, o) {
       const out = [];
@@ -122,6 +133,7 @@ export const PATHS = [
   },
   {
     id: 'sweep-up',
+    uses: ['overshoot'],
     label: 'Straight up',
     points(n, o) {
       return [{ x: o.cx, y: 1 + o.overshoot }, { x: o.cx, y: -o.overshoot }];
@@ -135,9 +147,11 @@ export function pathOptions(over = {}) {
   return Object.assign({
     cx: 0.5, cy: 0.5, r: 0.35, rotate: 0, turns: 3,
     // stretch scales the vertical extent only. The playfield is about 1:2, so
-    // a round-looking circle is much shorter than it is wide; stretch is how a
-    // spiral or figure-8 gets to fill the tall space instead of a flat band.
-    stretch: 1,
+    // at stretch 1 a path is visually round but covers only half the height,
+    // and even at maximum size a spiral could not reach the top edge. 1/aspect
+    // makes the vertical radius match the horizontal one in playfield terms, so
+    // Size means the same on both axes and its maximum reaches the edges.
+    stretch: 2,
     aspect: 0.5, overshoot: 0.1, inward: false, reverse: false, down: true,
     points: 24,
   }, over);

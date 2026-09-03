@@ -230,18 +230,22 @@ export function rangeRow(label, spec, current, apply, after) {
       if (src !== 'n' || Number(i.value) !== v) i.value = round(v, spec.step);
       apply(state.from, state.to);
       if (after) after();
-      badge.textContent = linked ? 'static' : 'start → end';
-      badge.className = 'anim-btn' + (linked ? '' : ' on');
+      sync();
     };
     r.addEventListener('input', () => push(r.value, 'r'));
     i.addEventListener('change', () => push(i.value, 'n'));
     return el('div', { class: 'wiz-range-half' }, [r, i]);
   };
 
+  // "Changes over the show" off is the common case, and showing a second
+  // slider for it doubled the height of every row for nothing. The end half is
+  // hidden until you ask for it.
   const badge = el('button', {
     class: 'anim-btn' + (linked ? '' : ' on'),
-    text: linked ? 'static' : 'start → end',
-    title: linked ? 'Same at both ends' : 'Animating across the clip',
+    text: 'changes',
+    title: linked
+      ? 'Off: one value for the whole clip. Turn on to animate it.'
+      : 'On: animates from the start value to the end value.',
     onclick: () => {
       if (linked) {
         const mid = (spec.min + spec.max) / 2;
@@ -253,19 +257,34 @@ export function rangeRow(label, spec, current, apply, after) {
       }
       show('to', state.to);
       apply(state.from, state.to);
-      badge.textContent = linked ? 'static' : 'start → end';
-      badge.className = 'anim-btn' + (linked ? '' : ' on');
+      sync();
       if (after) after();
     },
   });
 
   const fromHalf = mk('from');
   const toHalf = mk('to');
+  const startTag = el('span', { class: 'muted', text: 'start' });
+  const endTag = el('span', { class: 'muted', text: 'end' });
+  const pair = el('div', { class: 'wiz-range-pair' }, [
+    startTag, fromHalf, endTag, toHalf,
+  ]);
+
+  function sync() {
+    badge.className = 'anim-btn' + (linked ? '' : ' on');
+    badge.title = linked
+      ? 'Off: one value for the whole clip. Turn on to animate it.'
+      : 'On: animates from the start value to the end value.';
+    // hidden, not removed, so the values survive toggling it back on
+    endTag.hidden = linked;
+    toHalf.hidden = linked;
+    startTag.hidden = linked;    // with no end half, "start" labels nothing
+    pair.classList.toggle('single', linked);
+  }
+  sync();
+
   return el('div', { class: 'wiz-range' }, [
     el('div', { class: 'wiz-range-label' }, [el('span', { text: label }), badge]),
-    el('div', { class: 'wiz-range-pair' }, [
-      el('span', { class: 'muted', text: 'start' }), fromHalf,
-      el('span', { class: 'muted', text: 'end' }), toHalf,
-    ]),
+    pair,
   ]);
 }
