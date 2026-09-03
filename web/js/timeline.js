@@ -23,6 +23,9 @@ export class Timeline {
     this.h = 0;
     this.scrollMs = 0;
     this.scrollY = 0;
+    // non-zero only while a drag is in flight, to stop the scale chasing the
+    // very value being dragged
+    this.pinnedDur = 0;
     this.drag = null;
     this.hover = null;
 
@@ -49,9 +52,29 @@ export class Timeline {
 
   // ------------------------------------------------------------ mapping
 
+  /**
+   * Pixels per millisecond.
+   *
+   * The scale is derived from the show's length, and the show's length is the
+   * end of its longest layer - so dragging that layer's end used to move the
+   * ruler under the pointer. Longer clip, longer show, smaller scale, and the
+   * same pointer position now meant an earlier time, so the drag fought back
+   * and settled somewhere short of where it was let go. Pinning the length for
+   * the duration of a gesture breaks the loop. Zoom is deliberately left live,
+   * so ctrl+wheel still works mid-drag.
+   */
   pxPerMs() {
-    const dur = Math.max(1, projectDuration(this.app.project));
+    const dur = Math.max(1, this.pinnedDur || projectDuration(this.app.project));
     return ((this.w - PAD_L * 2) / dur) * this.app.zoom;
+  }
+
+  /** Hold the scale still while a gesture is in flight. */
+  pinScale() {
+    this.pinnedDur = Math.max(1, projectDuration(this.app.project));
+  }
+
+  unpinScale() {
+    this.pinnedDur = 0;
   }
 
   msToX(ms) { return PAD_L + (ms - this.scrollMs) * this.pxPerMs(); }
@@ -118,6 +141,7 @@ export class Timeline {
     if (ki >= 0) {
       app.selectKey(ki);
       app.pushUndo('move keyframe');
+      this.pinScale();
       this.drag = { mode: 'key', layer, index: ki };
       app.refreshInspector();
       app.requestDraw();
@@ -126,6 +150,7 @@ export class Timeline {
 
     if (x >= x0 - EDGE && x <= x1 + EDGE) {
       app.pushUndo('move clip');
+      this.pinScale();
       let mode = 'clip';
       if (Math.abs(x - x0) <= EDGE) mode = 'clipL';
       else if (Math.abs(x - x1) <= EDGE) mode = 'clipR';
@@ -210,6 +235,7 @@ export class Timeline {
     if (!this.drag) return;
     const wasKey = this.drag.mode === 'key';
     this.drag = null;
+    this.unpinScale();
     this.app.onProjectEdit({});
     if (wasKey) this.app.refreshInspector();
   }
