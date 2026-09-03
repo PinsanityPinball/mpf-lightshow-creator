@@ -738,3 +738,10 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
 
 /* a collapsible block of set-once settings */
 .fold-body { padding-left: 2px; }
+
+/* start-times list for an instanced layer */
+.at-list {
+  width: 100%; resize: vertical; font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px; background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px;
+}

@@ -7,7 +7,7 @@
  * re-reads it, so the freshness check still notices edits made outside.
  */
 
-import { el, button, showModal, hideModal, api, status } from './ui.js';
+import { el, button, showModal, hideModal, api } from './ui.js';
 
 const ICON = { map: '◉', tags: '▤', both: '◈', yaml: '·' };
 const KIND_LABEL = { map: 'light map', tags: 'tags', both: 'map + tags', yaml: '' };
@@ -83,12 +83,14 @@ export function pickFile(opts = {}) {
         }));
       }
 
-      // in folder mode the folder you are standing in is the thing being picked
-      if (folderMode && data.path) {
-        chosen = data.path;
-        useBtn.disabled = false;
-        foot.textContent = data.path;
-        foot.classList.add('on');
+      // In folder mode the folder you are standing in is the thing being picked.
+      // "Places" is not a folder, so nothing is selected there - otherwise the
+      // button stayed armed with whichever folder you had navigated out of.
+      if (folderMode) {
+        chosen = data.path || null;
+        useBtn.disabled = !chosen;
+        foot.textContent = chosen || 'Open a folder to choose it.';
+        foot.classList.toggle('on', !!chosen);
       }
 
       list.textContent = '';

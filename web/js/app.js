@@ -138,7 +138,6 @@ class App {
     this.rebuildHeads();
     this.resizeAll();
     this.inspector.refresh();
-    this.rebuildHeads();
     window.addEventListener('resize', () => this.resizeAll());
 
     // Notice edits made to the light map outside the app.
@@ -1295,13 +1294,17 @@ class App {
     const nameInput = el('input', { type: 'text', value: filename });
 
     const preview = el('pre', { text: result.yaml.split('\n').slice(0, 400).join('\n') });
-    if (s.trimmedHead) {
-      body2.appendChild(el('div', { class: 'warn',
-        text: `Heads up: ${s.trimmedHead} dark frame`
-          + `${s.trimmedHead === 1 ? '' : 's'} were trimmed from the start, so every `
-          + `cue now happens ${s.headShiftMs} ms earlier than on the timeline. `
-          + 'Turn off "Trim dark frames at the start" if this show is cut to audio or video.' }));
-    }
+    // Built here and placed into body2 below. This used to append to body2
+    // before body2 was declared, which threw a ReferenceError outside the
+    // try/catch: the progress modal stuck at 100% and the export dialog never
+    // opened, on every export with "Trim dark frames at the start" on.
+    const headWarning = s.trimmedHead ? el('div', {
+      class: 'warn',
+      text: `Heads up: ${s.trimmedHead} dark frame`
+        + `${s.trimmedHead === 1 ? '' : 's'} were trimmed from the start, so every `
+        + `cue now happens ${s.headShiftMs} ms earlier than on the timeline. `
+        + 'Turn off "Trim dark frames at the start" if this show is cut to audio or video.',
+    }) : null;
     const trimmed = (s.trimmedHead || 0) + (s.trimmedTail || 0);
     const info = el('div', { class: 'stat-grid' }, [
       el('span', { text: 'Steps' }), el('span', { text: `${s.frames} (${s.changedFrames} with changes, ${s.idleFrames} idle)` }),
@@ -1312,6 +1315,7 @@ class App {
     ]);
 
     const body2 = el('div', {}, [
+      headWarning,
       info,
       el('div', { class: 'sec', text: 'File name' }),
       nameInput,

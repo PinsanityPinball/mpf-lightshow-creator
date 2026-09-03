@@ -1,7 +1,9 @@
 // Canvas timeline: a clip per layer, keyframe diamonds on each clip, and a
 // scrubbable playhead. Replaces the original tool's "press P and hope".
 
-import { projectDuration, layerEndMs, invalidateKeys, makeKey, stateAt } from './project.js';
+import {
+  projectDuration, invalidateKeys, makeKey, stateAt, layerFireTimes,
+} from './project.js';
 
 const ROW_H = 30;
 const RULER_H = 26;
@@ -81,6 +83,12 @@ export class Timeline {
 
   // ------------------------------------------------------------ input
 
+  /** Right edge of the clip as drawn: the end of its first firing. */
+  clipEndMs(layer) {
+    return layer.startMs
+      + Math.max(1, layer.durationMs) * Math.max(1, layer.repeat || 1);
+  }
+
   onDown(e) {
     const { x, y } = this.pointer(e);
     const app = this.app;
@@ -100,7 +108,7 @@ export class Timeline {
     const rowTop = this.rowY(row);
 
     const x0 = this.msToX(layer.startMs);
-    const x1 = this.msToX(layerEndMs(layer));
+    const x1 = this.msToX(this.clipEndMs(layer));
     const onEdge = Math.abs(x - x0) <= EDGE || Math.abs(x - x1) <= EDGE;
 
     // Keyframes come first everywhere except the two edges. The end keys live
@@ -151,7 +159,7 @@ export class Timeline {
         const layer = app.project.layers[row];
         const rowTop = this.rowY(row);
         const x0 = this.msToX(layer.startMs);
-        const x1 = this.msToX(layerEndMs(layer));
+        const x1 = this.msToX(this.clipEndMs(layer));
         if (Math.abs(x - x0) <= EDGE || Math.abs(x - x1) <= EDGE) cursor = 'ew-resize';
         else if (this.keyAt(layer, rowTop, x, y) >= 0) cursor = 'grab';
         else if (x > x0 && x < x1) cursor = 'move';
@@ -345,6 +353,25 @@ export class Timeline {
 
     const reps = Math.max(1, layer.repeat || 1);
     const dur = Math.max(1, layer.durationMs);
+
+    // An instanced layer fires more than once. Each extra firing is drawn as a
+    // faint bar so the pattern of them is visible; the first firing is drawn
+    // normally below, since it is the one the clip handles belong to.
+    const fires = layerFireTimes(layer);
+    if (fires.length > 1) {
+      ctx.save();
+      ctx.globalAlpha = layer.enabled ? 0.45 : 0.18;
+      ctx.fillStyle = layer.kind === 'pattern' && layer.pattern ? layer.pattern.color
+        : (layer.keys.length ? layer.keys[0].color : '#4fc3f7');
+      for (let i = 1; i < fires.length; i++) {
+        const ix = this.msToX(fires[i]);
+        const iw = Math.max(2, this.msToX(fires[i] + dur * reps) - ix);
+        if (ix > this.w || ix + iw < 0) continue;
+        ctx.fillRect(ix, y + 8, iw, ROW_H - 16);
+      }
+      ctx.restore();
+    }
+
     const x0 = this.msToX(layer.startMs);
     const x1 = this.msToX(layer.startMs + dur * reps);
     const bw = Math.max(3, x1 - x0);

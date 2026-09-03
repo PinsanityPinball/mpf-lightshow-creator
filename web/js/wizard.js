@@ -129,7 +129,12 @@ export class Wizard {
       this.foot,
     ]));
 
-    host.addEventListener('click', (e) => { if (e.target === host) this.close(); });
+    // mount() runs on every open but #wizard is created once and left in the
+    // DOM, so this would stack up a handler per open
+    if (!host.dataset.wired) {
+      host.dataset.wired = '1';
+      host.addEventListener('click', (e) => { if (e.target === host) this.close(); });
+    }
   }
 
   /** Play/pause and a scrubber, so the preview can hold still while you read. */
@@ -221,7 +226,7 @@ export class Wizard {
    * is open is remembered per step for as long as the wizard is open, so
    * anyone who wants it does not have to keep reopening it.
    */
-  custom(parent, label) {
+  custom(parent) {
     const key = this.steps[this.step].id;
     this.advancedOpen = this.advancedOpen || {};
     const open = !!this.advancedOpen[key];
@@ -508,10 +513,17 @@ export class Wizard {
     c.appendChild(field('Fill', selectBox(L.colorMode, [
       ['solid', 'Solid'], ['gradient', 'Two-colour gradient'], ['rainbow', 'Rainbow'],
     ], (v) => { L.colorMode = v; this.render(); })));
-    c.appendChild(field('Start colour', colorInput(r.from,
-      (v) => { setColourRange(L, v, r.to); if (!this.playing) this.drawPreview(); })));
-    c.appendChild(field('End colour', colorInput(r.to,
-      (v) => { setColourRange(L, r.from, v); if (!this.playing) this.drawPreview(); })));
+    // Read the range at the moment of the change, not at build time. The
+    // captured `r` went stale as soon as either picker was used, so setting an
+    // end colour wrote back the start colour from before you changed it.
+    c.appendChild(field('Start colour', colorInput(r.from, (v) => {
+      setColourRange(L, v, colourRange(L).to);
+      if (!this.playing) this.drawPreview();
+    })));
+    c.appendChild(field('End colour', colorInput(r.to, (v) => {
+      setColourRange(L, colourRange(L).from, v);
+      if (!this.playing) this.drawPreview();
+    })));
     c.appendChild(field('Tween through', selectBox(L.colorLerp, [
       ['rgb', 'RGB (direct)'], ['hsl', 'HSL (around the wheel)'],
     ], (v) => { L.colorLerp = v; setColourRange(L, r.from, r.to); })));

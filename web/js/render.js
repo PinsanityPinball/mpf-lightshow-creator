@@ -11,8 +11,9 @@
 import { SHAPE_BY_ID, shapeExtent } from './shapes.js';
 import {
   layerStateAtTime, resolveShow, showFrameAt, mapShowToLights,
-  orderedTargets, patternTimeAt, targetBounds, mulberry32, hashString,
+  orderedTargets, patternTimeAt, patternTimesAt, targetBounds, mulberry32, hashString,
   effectiveParams, hexToRgb, rgbToHex,
+  layerInstancesAtTime,
 } from './project.js';
 
 const D2R = Math.PI / 180;
@@ -194,6 +195,7 @@ export class ShowRenderer {
 
   /** One averaging layer's contribution to a light, in linear light. */
   addAverage(i, r, g, b) {
+    this.avgPending = true;
     const k = i * 3;
     this.avgSum[k] += r;
     this.avgSum[k + 1] += g;
@@ -214,6 +216,8 @@ export class ShowRenderer {
    * hue the average produced and the brightness the layers asked for.
    */
   resolveAverage(n) {
+    if (!this.avgPending) return;
+    this.avgPending = false;
     for (let i = 0; i < n; i++) {
       const c = this.avgCount[i];
       if (!c) continue;
@@ -230,6 +234,10 @@ export class ShowRenderer {
       this.accum[k] += r;
       this.accum[k + 1] += g;
       this.accum[k + 2] += b;
+      // reset so a later group averages on its own terms
+      this.avgSum[k] = 0; this.avgSum[k + 1] = 0; this.avgSum[k + 2] = 0;
+      this.avgCount[i] = 0;
+      this.avgPeak[i] = 0;
     }
   }
 
@@ -249,6 +257,7 @@ export class ShowRenderer {
     this.avgSum.fill(0);
     this.avgCount.fill(0);
     this.avgPeak.fill(0);
+    this.avgPending = false;
 
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -263,18 +272,42 @@ export class ShowRenderer {
 
     for (const layer of project.layers) {
       if (!layer.enabled) continue;
-      const st = layerStateAtTime(layer, timeMs);
+
+      // Erase and Normal work by reading and rewriting `accum`, but averaging
+      // layers do not reach `accum` until their group is resolved. Resolving
+      // early - right before a layer that reads it - is what makes "erase only
+      // affects the layers below it" true for averaged layers too. Without
+      // this an eraser simply had no effect on anything averaged.
+      if (layer.blend === 'erase' || layer.blend === 'normal') {
+        this.resolveAverage(lights.length);
+      }
 
       if (layer.kind === 'show') {
+        const st = layerStateAtTime(layer, timeMs);
         if (this.accumulateShow(layer, lights, timeMs, st, toLin)) showLayers++;
         continue;
       }
       if (layer.kind === 'pattern') {
-        if (this.accumulatePattern(layer, lights, timeMs, st, toLin)) patternLayers++;
+        const st = layerStateAtTime(layer, timeMs);
+        const fires = patternTimesAt(layer, timeMs);
+        let ran = false;
+        for (const f of fires) {
+          if (this.accumulatePattern(layer, lights, timeMs, st, toLin, f.t)) ran = true;
+        }
+        if (ran) patternLayers++;
         continue;
       }
-      if (!st || st.alpha <= 0) continue;
-      if (this.drawAndAccumulate(layer, st, lights, opts, toLin)) shapeLayers++;
+
+      // A layer with extra fire times is drawn once per firing that is alive
+      // now. They overlap freely: a 1s gesture fired every 200ms has five of
+      // itself on screen, which is the reason the feature exists.
+      const live = layerInstancesAtTime(layer, timeMs);
+      let drew = false;
+      for (const inst of live) {
+        if (!inst.state || inst.state.alpha <= 0) continue;
+        if (this.drawAndAccumulate(layer, inst.state, lights, opts, toLin)) drew = true;
+      }
+      if (drew) shapeLayers++;
     }
 
     this.resolveAverage(lights.length);
@@ -536,6 +569,11 @@ export class ShowRenderer {
   fitPeriod(layer, wanted, on) {
     const want = Math.max(1, wanted);
     if (!on || !(layer.durationMs > 0)) return want;
+    // A clip shorter than the period cannot hold a whole cycle. Rounding up to
+    // one anyway made a 200ms clip run a 3000ms plasma fifteen times too fast,
+    // which is not "fractionally" off. Below one cycle, keep the speed that was
+    // asked for and let the clip simply cut it short.
+    if (layer.durationMs < want) return want;
     const cycles = Math.max(1, Math.round(layer.durationMs / want));
     return layer.durationMs / cycles;
   }
@@ -544,10 +582,12 @@ export class ShowRenderer {
    * A blink/chase pattern, applied straight to the targeted lights.
    * No canvas involved, so the colours land exactly as written.
    */
-  accumulatePattern(layer, lights, timeMs, st, toLin) {
+  accumulatePattern(layer, lights, timeMs, st, toLin, localT) {
     const p = layer.pattern;
     if (!p) return false;
-    const t = patternTimeAt(layer, timeMs);
+    // localT lets the caller run one specific firing of an instanced layer;
+    // without it the layer's own single firing is used
+    const t = localT == null ? patternTimeAt(layer, timeMs) : localT;
     if (t === null) return false;
     const alphaScale = st ? Math.max(0, Math.min(1, st.alpha)) : 1;
     if (alphaScale <= 0) return false;
@@ -621,7 +661,7 @@ export class ShowRenderer {
     if (p.type === 'wavy') {
       const b = targetBounds(layer, lights, mask);
       if (!b.n) return false;
-      const period = this.fitPeriod(layer, p.periodMs, p.loop !== false && p.fit !== false);
+      const period = this.fitPeriod(layer, p.periodMs, p.fit !== false);
       const lambda = Math.max(0.02, p.wavelength);
       const phase = t / period;
       const floor = Math.max(0, Math.min(1, p.floorLevel));
@@ -842,11 +882,15 @@ export class ShowRenderer {
       if (!b.n) return false;
       const period = this.fitPeriod(layer, p.sweepMs, p.fit !== false);
       const width = Math.max(0.02, p.bandWidth);
-      const u = (t / period) % 1;
+      let u = (t / period) % 1;
+      // Reverse has to move the head, not just the tail. It used to only flip
+      // which side the trail fell on, so the band swept the same way whether it
+      // was ticked or not.
+      if (p.reverse) u = 1 - u;
       // a bounce is a triangle wave; without it the band wraps round instead
       const head = p.bounce !== false ? (u < 0.5 ? u * 2 : 2 - u * 2) : u;
       const goingBack = p.bounce !== false && u >= 0.5;
-      const dir = (p.reverse ? -1 : 1) * (goingBack ? -1 : 1);
+      const dir = goingBack ? -1 : 1;
       const tail = Math.max(0, Math.min(1, p.tailLen));
 
       for (let i = 0; i < lights.length; i++) {

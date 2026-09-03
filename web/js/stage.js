@@ -164,8 +164,10 @@ export class Stage {
     if (hit) {
       if (!layer || hit.id !== layer.id) app.selectLayer(hit.id);
       const st = this.liveState(hit);
-      const key = app.targetKey(hit);
+      // pushUndo first: with auto-key on, targetKey() inserts a keyframe, and a
+      // snapshot taken after that already contains it, so undo could not remove it
       app.pushUndo('move');
+      const key = app.targetKey(hit);
       this.drag = {
         mode: 'move',
         layer: hit,

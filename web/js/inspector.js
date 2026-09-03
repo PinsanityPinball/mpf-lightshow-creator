@@ -6,6 +6,7 @@ import { LAYER_STEPS } from './steps.js';
 import { SHAPES, SHAPE_BY_ID, shapeDefaults } from './shapes.js';
 import {
   EASE_NAMES, makeKey, invalidateKeys, projectDuration, frameCount, layerEndMs,
+  layerFireTimes,
   animateParam, unanimateParam, effectiveParams,
   setScaleRange, scaleRange, scaleIsUniform, fadeState, setFades,
 } from './project.js';
@@ -127,6 +128,7 @@ export class Inspector {
       app.pushUndo('rename', `${layer.id}:name`);
       layer.name = name.value;
       app.rebuildHeads();
+      app.requestDraw();      // the clip label is drawn on the canvas
     };
     name.addEventListener('input', rename);
     name.addEventListener('change', rename);
@@ -272,6 +274,121 @@ export class Inspector {
       ]));
     }
 
+  }
+
+  /**
+   * Fire the same layer more than once.
+   *
+   * A gesture that repeats at irregular times used to need one layer object per
+   * firing. Across the saved shows, 63-71% of every layer is an exact duplicate
+   * of another differing only in start time - one file has 291 copies of a
+   * single gesture. Listing the extra times here collapses all of that into one
+   * layer, and each firing can be varied so a train does not look mechanical.
+   */
+  paneRepeats(root, layer, edit) {
+    const app = this.app;
+    const times = layerFireTimes(layer);
+    const span = Math.max(1, layer.durationMs) * Math.max(1, layer.repeat || 1);
+
+    root.appendChild(section('Fire again'));
+
+    if (times.length <= 1) {
+      root.appendChild(hint('This layer fires once. Give it more start times and the '
+        + 'same animation runs again at each of them, overlapping freely - one layer '
+        + 'instead of a copy per firing.'));
+      const every = el('input', { type: 'number', value: Math.max(50, span), min: 10, step: 10 });
+      const count = el('input', { type: 'number', value: 4, min: 2, max: 500, step: 1 });
+      root.appendChild(field('Every (ms)', every));
+      root.appendChild(field('How many', count));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        button('Add repeats', () => edit('repeat layer', () => {
+          const gap = Math.max(10, Math.round(Number(every.value) || span));
+          const n = Math.max(2, Math.min(500, Math.round(Number(count.value) || 2)));
+          const out = [];
+          for (let i = 0; i < n; i++) out.push(layer.startMs + i * gap);
+          layer.at = out;
+          this.buildLayer();
+          app.rebuildHeads();
+        }), 'primary small'),
+      ]));
+      return;
+    }
+
+    const last = times[times.length - 1];
+    root.appendChild(hint(`Fires ${times.length} times, from ${times[0]} to ${last} ms. `
+      + `Each run lasts ${span} ms, so `
+      + (times.length > 1 && times[1] - times[0] < span
+        ? 'firings overlap.' : 'they do not overlap.')));
+
+    const list = el('textarea', {
+      rows: 3, class: 'at-list',
+      value: times.join(', '),
+      title: 'Start times in milliseconds, separated by commas or spaces',
+    });
+    list.addEventListener('change', () => edit('fire times', () => {
+      const parsed = String(list.value).split(/[^0-9.-]+/)
+        .map((v) => Math.round(Number(v)))
+        .filter((v) => Number.isFinite(v) && v >= 0);
+      layer.at = parsed.length ? parsed.sort((a, b) => a - b) : [];
+      if (layer.at.length) layer.startMs = layer.at[0];
+      this.buildLayer();
+      app.rebuildHeads();
+    }));
+    root.appendChild(field('Start times', list));
+
+    root.appendChild(el('div', { class: 'btn-row' }, [
+      button('Shift to playhead', () => edit('shift repeats', () => {
+        const delta = Math.round(app.renderTime()) - times[0];
+        layer.at = times.map((t) => Math.max(0, t + delta));
+        layer.startMs = layer.at[0];
+        this.buildLayer();
+        app.rebuildHeads();
+      }), 'small'),
+      button('Back to one', () => edit('single firing', () => {
+        layer.at = [];
+        this.buildLayer();
+        app.rebuildHeads();
+      }), 'small danger'),
+    ]));
+
+    // --- per-firing variation
+    const v = layer.vary || {};
+    root.appendChild(section('Vary each firing'));
+    root.appendChild(slider('Hue shift per firing', v.hue || 0,
+      { min: -90, max: 90, step: 1 }, (val) => {
+        app.pushUndo('vary hue', `${layer.id}:varyhue`);
+        layer.vary = Object.assign({}, layer.vary, { hue: val });
+        if (!val) delete layer.vary.hue;
+        app.onProjectEdit({ light: true });
+      }));
+    root.appendChild(hint(v.hue
+      ? `Firing ${times.length} is ${Math.round(v.hue * (times.length - 1))} degrees `
+        + 'round the wheel from the first. Cumulative, so a long train drifts through '
+        + 'the spectrum instead of flicking between a few colours.'
+      : 'Cumulative degrees per firing. Leave at 0 and every firing is the same colour.'));
+
+    const posList = (key, label) => {
+      const box = el('input', {
+        type: 'text', value: (v[key] || []).join(', '),
+        placeholder: 'e.g. 0.2, 0.5, 0.8',
+        title: 'Values cycled by firing, so three values across ten firings repeat 1-2-3',
+      });
+      box.addEventListener('change', () => edit('vary ' + label, () => {
+        const parsed = String(box.value).split(/[^0-9.-]+/)
+          .map(Number).filter((n) => Number.isFinite(n));
+        layer.vary = Object.assign({}, layer.vary);
+        if (parsed.length) layer.vary[key] = parsed;
+        else delete layer.vary[key];
+        if (!Object.keys(layer.vary).length) layer.vary = null;
+        this.buildLayer();
+      }));
+      root.appendChild(field(label, box));
+    };
+    posList('x', 'Across (0-1)');
+    posList('y', 'Up/down (0-1)');
+    posList('scale', 'Size');
+    root.appendChild(hint('Each list is cycled by firing number, so a few values cover '
+      + 'any number of firings. Empty means that property is the same every time.'));
   }
 
   paneSize(root, layer, edit) {
@@ -457,6 +574,8 @@ export class Inspector {
       checkbox('Visible after', layer.holdAfter, (v) => edit('hold', () => { layer.holdAfter = v; })),
     ]));
     root.appendChild(hint(`Ends at ${Math.round(layerEndMs(layer))} ms.`));
+
+    this.paneRepeats(root, layer, edit);
 
     root.appendChild(section('Blend'));
     root.appendChild(field('Mode', selectBox(layer.blend, [
@@ -748,22 +867,19 @@ export class Inspector {
         this.live(`${layer.id}:pfloor`, 'trough', (v) => { p.floorLevel = v; })));
       root.appendChild(slider('Crest sharpness', p.sharpness, { min: 0.2, max: 6, step: 0.1 },
         this.live(`${layer.id}:psharp`, 'sharpness', (v) => { p.sharpness = v; })));
-      root.appendChild(el('div', { class: 'btn-row' }, [
-        checkbox('Seamless loop', p.loop !== false, (v) => edit('wave loop', () => {
-          p.loop = v;
-          this.buildLayer();
-        })),
-      ]));
+      // "Seamless loop" and "Fit to layer length" were ANDed in the renderer, so
+      // each read as on while the other silently disabled it. Fit is the one
+      // that acts, and it is offered on every pattern, so this copy is gone.
       const cycles = Math.max(1, Math.round(layer.durationMs / Math.max(1, p.periodMs)));
       root.appendChild(hint('The wave runs across the real light positions, so it follows '
         + 'your playfield layout rather than a drawn shape.'
-        + (p.loop !== false
-          ? ` Seamless loop rounds the cycle to ${cycles} whole `
+        + (p.fit !== false
+          ? ` Fit rounds the cycle to ${cycles} whole `
             + `${cycles === 1 ? 'pass' : 'passes'} across the clip `
             + `(${Math.round(layer.durationMs / cycles)} ms each), so the wave does not `
             + 'jump when the layer repeats.'
-          : ' Without the loop the wave is mid-stroke when the clip ends, which shows '
-            + 'as a jump each time it repeats.')));
+          : ' With Fit off the wave is mid-stroke when the clip ends, which shows '
+            + 'as a jump each time the layer repeats.')));
       if (p.waveColor2) {
         root.appendChild(hint('With a trough colour the wave washes between two colours. '
           + 'It needs Trough brightness above 0 to be visible at all.'));
@@ -777,6 +893,11 @@ export class Inspector {
         this.live(`${layer.id}:pcols`, 'columns', (v) => { p.cols = Math.round(v); })));
       root.appendChild(slider('Rows', p.rows, { min: 1, max: 24, step: 1 },
         this.live(`${layer.id}:prows`, 'rows', (v) => { p.rows = Math.round(v); })));
+      if (p.fit !== false) {
+        root.appendChild(hint('Fit to layer length is on, so the fill takes the '
+          + `whole clip: ${layer.durationMs} ms. Turn Fit off to set the fill `
+          + 'time directly.'));
+      } else
       root.appendChild(field('Fill time (ms)', numberInput(p.fillMs, 50, 120000, 50,
         (v) => edit('fill time', () => { p.fillMs = Math.max(50, Math.round(v)); this.buildLayer(); }))));
       root.appendChild(field('Fills', selectBox(p.fillOrder, [
@@ -815,7 +936,7 @@ export class Inspector {
           this.buildLayer();
         }))));
       root.appendChild(field('Order by', selectBox(p.order, [
-        ['name', 'Light name'], ['x', 'Left to right'], ['y', 'Bottom to top'],
+        ['name', 'Light name'], ['x', 'Left to right'], ['y', 'Top to bottom'],
         ['angle', 'Around the centre'],
       ], (v) => edit('marquee order', () => { p.order = v; this.buildLayer(); }))));
       root.appendChild(el('div', { class: 'btn-row' }, [
@@ -957,6 +1078,11 @@ export class Inspector {
     }
 
     if (p.type === 'chase') {
+      if (p.fit !== false) {
+        root.appendChild(hint('Fit to layer length is on, so the step time comes '
+          + 'from the clip: one full pass along the lights over its '
+          + `${layer.durationMs} ms. Turn Fit off to set the step directly.`));
+      } else
       root.appendChild(field('Step (ms)', numberInput(p.stepMs, 1, 10000, 10,
         (v) => edit('chase step', () => { p.stepMs = Math.max(1, Math.round(v)); this.buildLayer(); }))));
       root.appendChild(slider('Lit at once', p.width, { min: 1, max: 12, step: 1 },
@@ -1016,7 +1142,7 @@ export class Inspector {
     root.appendChild(hint(count
       ? `Drives ${count} light${count === 1 ? '' : 's'} at exact colours - no shape to `
         + 'position and no pixel sampling, so the values land precisely as set.'
-      : 'No lights selected yet. Pick tags under "Applies to" above.'));
+      : 'No lights selected yet. Pick some tags on the Lights tab.'));
     root.appendChild(hint('Pattern layers draw nothing on the playfield, so switch the '
       + 'view to Lights or Both to see them.'));
   }
