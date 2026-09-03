@@ -1,6 +1,6 @@
 # Transitions
 
-> **Status: tier 1 shipped.** Fade, Dissolve, Wipe, Iris, Split and Blinds all
+> **Status: tier 1 shipped.** Fade, Dissolve, Wipe, Iris and Split all
 > work, on shape, pattern and imported-show layers alike, and default to None -
 > a layer with no transition carries no transition field at all, so existing
 > shows reload and render byte-identically. Verified by rendering
@@ -105,7 +105,6 @@ Every separable transition is then one small function of `(x, y, p)`:
 | Wipe | `clamp((p - x) / soft)` — any axis, or by angle |
 | Iris / Box / Circle | same, on distance from the centre |
 | Split | `abs(x - 0.5) > p / 2` |
-| Blinds / Bars | banded `x` |
 | Dissolve | `seededRandom(i) < p` |
 
 Blend modes, `erase`, averaging, tag masks, instancing and determinism all live
@@ -136,7 +135,7 @@ transformed before it is sampled:
 | Wipe, any direction | 1 | Yes |
 | Iris / Box / Circle / Split | 1 | Yes |
 | Cover / Uncover | 1 | Yes — better here, the layer below survives |
-| Blinds, Bars, Checkerboard | 1 | Buildable, but see *taste* below |
+| Blinds, Bars, Checkerboard | 1 | Built, then cut - see *taste* below |
 | Flip | 2 | Yes, via scaleX — no perspective |
 | Push | 2 | Yes, approximated — see *matched durations* |
 | Doors | 2 | Yes, needs the two-clipped-halves draw |
@@ -191,8 +190,11 @@ it should warn when transitions push the step count past a threshold.
 
 Blinds and checkerboard assume a dense rectangular grid. This playfield has 435
 irregular positions. Voronoi was built and removed for exactly this reason — see
-[`pattern-ideas.md`](pattern-ideas.md). Build them, look at them on the real
-machine, and keep them only if they earn it.
+[`pattern-ideas.md`](pattern-ideas.md).
+
+**Confirmed, and Blinds is gone.** It was built, looked at, and read as noise
+rather than as slats. Checkerboard would fail the same way and is not worth
+building.
 
 ---
 
@@ -224,12 +226,14 @@ machine, and keep them only if they earn it.
    were **left in place** - removing a working control before its replacement
    has been used in anger seemed the wrong order. Unifying them is the next
    tidy-up, not a blocker.
-3. ~~Wipe and Iris~~, plus Split and Blinds. Done.
+3. ~~Wipe and Iris~~, plus Split. Done.
 4. ~~Export-cost warning.~~ Done: the export dialog says so when a show with
    transitions comes out over 400 kB.
 5. Flip and Push, as presets over existing size and motion keys.
 6. Doors — the clipped two-halves draw.
-7. Blinds and checkerboard last, on the real machine, kept only if they read.
+7. ~~Blinds and checkerboard last, on the real machine, kept only if they
+   read.~~ Blinds was built and cut: it read as noise on scattered lights,
+   exactly as the doubt below predicted.
 
 ---
 

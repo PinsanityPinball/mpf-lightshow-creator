@@ -816,10 +816,6 @@ export class Inspector {
           n.axis = v[0]; n.reverse = v[1] === '-';
         }))));
     }
-    if (type === 'blinds') {
-      root.appendChild(field('Bands', numberInput(tr.bands, 2, 40, 1,
-        (v) => write('transition bands', (n) => { n.bands = v; }))));
-    }
     if (type !== 'fade') {
       root.appendChild(slider('Edge softness', tr.softness, { min: 0.02, max: 1, step: 0.02 },
         (v) => write('transition softness', (n) => { n.softness = v; })));

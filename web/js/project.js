@@ -245,8 +245,10 @@ export const TRANSITIONS = [
   { id: 'wipe', name: 'Wipe' },
   { id: 'iris', name: 'Iris' },
   { id: 'split', name: 'Split' },
-  { id: 'blinds', name: 'Blinds' },
 ];
+// Blinds was built and cut. It needs a dense rectangular grid to read as
+// slats; on a few hundred scattered playfield lights it looked like noise -
+// the same reason Voronoi was removed. See docs/pattern-ideas.md.
 
 export const TRANSITION_NAME = new Map(TRANSITIONS.map((t) => [t.id, t.name]));
 
@@ -255,15 +257,13 @@ export function makeTransition(over = {}) {
   const t = Object.assign({
     type: 'none',
     durationMs: 300,   // one control, used for both the In and the Out
-    axis: 'x',         // wipe and blinds: which way it travels
+    axis: 'x',         // wipe and split: which way it travels
     reverse: false,    // and from which end
     softness: 0.25,    // width of the moving edge, as a fraction of the field
-    bands: 6,          // blinds only
     seed: 0,           // dissolve only
   }, over);
   t.durationMs = Math.max(0, Math.round(t.durationMs) || 0);
   t.softness = Math.max(0.01, Math.min(1, t.softness));
-  t.bands = Math.max(2, Math.min(40, Math.round(t.bands) || 6));
   return t;
 }
 

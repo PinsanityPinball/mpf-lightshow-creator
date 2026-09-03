@@ -65,12 +65,6 @@ function coverageFor(layer, lights, phase) {
     };
   } else if (tr.type === 'split') {
     coord = (i) => Math.min(1, Math.abs((onY ? lights[i].y : lights[i].x) - 0.5) * 2);
-  } else if (tr.type === 'blinds') {
-    const bands = Math.max(2, Math.min(40, tr.bands || 6));
-    coord = (i) => {
-      const v = (onY ? lights[i].y : lights[i].x) * bands;
-      return v - Math.floor(v);
-    };
   } else {   // wipe
     coord = (i) => (onY ? lights[i].y : lights[i].x);
   }
