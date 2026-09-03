@@ -128,8 +128,13 @@ steps, so you are only ever looking at one concern at a time:
 The layer's name, its on/off checkbox and **Save** stay pinned above the tabs.
 Pattern and imported-show layers get their own two-tab set instead.
 
-**Surprise me** adds *one* random layer at the playhead and leaves the rest of
-your show alone — roll it repeatedly to build something up, or undo it.
+**Roll** (beside Dup/Del/Effects) adds one random layer and leaves the rest of
+your show alone. Click it as many times as you like, or undo.
+
+New layers start at **0 ms**, not wherever the playhead is sitting — a show
+should begin at the beginning. The one exception is the effects library, which
+is explicitly about dropping something in at a moment, so it still inserts at
+the playhead.
 
 ## Light maps and tags
 
@@ -264,7 +269,7 @@ state that greets you, both lead to the same five choices:
 - **Start from a preset** — sweeps, spins, chases, blinks, sparkles
 - **From my effects library** — anything you saved before
 - **Import an MPF show** — stack an existing show with new layers
-- **Surprise me** — roll a whole random show
+- **Surprise me** — add one random layer (same as the Roll button)
 
 `Ctrl+N` opens the same chooser.
 
