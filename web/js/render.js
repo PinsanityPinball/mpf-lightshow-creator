@@ -517,7 +517,14 @@ export class ShowRenderer {
     if (p.type === 'wavy') {
       const b = targetBounds(layer, lights, mask);
       if (!b.n) return false;
-      const period = Math.max(1, p.periodMs);
+      // A wave that is mid-stroke when the clip ends jumps on the loop. Snapping
+      // the period to a whole number of cycles across the clip removes the seam;
+      // the wave runs at very nearly the requested speed either way.
+      let period = Math.max(1, p.periodMs);
+      if (p.loop !== false && layer.durationMs > 0) {
+        const cycles = Math.max(1, Math.round(layer.durationMs / period));
+        period = layer.durationMs / cycles;
+      }
       const lambda = Math.max(0.02, p.wavelength);
       const phase = t / period;
       const floor = Math.max(0, Math.min(1, p.floorLevel));
@@ -538,8 +545,19 @@ export class ShowRenderer {
         const s = Math.sin(2 * Math.PI * (pos / lambda - phase));
         let level = (s + 1) / 2;                 // 0..1
         if (sharp !== 1) level = Math.pow(level, sharp);
-        level = floor + (1 - floor) * level;
-        if (level > 0.002) put(i, p.color, level);
+        const bright = floor + (1 - floor) * level;
+        if (bright <= 0.002) continue;
+        // With a trough colour the wave washes between two colours rather than
+        // just dimming, which needs a floor above 0 to be visible at all.
+        let hex = p.color;
+        if (p.waveColor2) {
+          const ca = hexToRgb(p.waveColor2);
+          const cb = hexToRgb(p.color);
+          hex = rgbToHex(ca.r + (cb.r - ca.r) * level,
+                         ca.g + (cb.g - ca.g) * level,
+                         ca.b + (cb.b - ca.b) * level);
+        }
+        put(i, hex, bright);
       }
       return true;
     }
@@ -561,24 +579,76 @@ export class ShowRenderer {
         return (rows - 1 - row) * cols + col;         // bottom-up
       };
 
+      // The inverse of cellRank, so the piece currently being placed can be
+      // followed to where it is going. Without this the stack simply appeared a
+      // cell at a time; watching it travel is what makes it read as falling.
+      const rankCell = (rank) => {
+        if (p.fillOrder === 'top-down') return { col: rank % cols, row: Math.floor(rank / cols) };
+        if (p.fillOrder === 'left-right') return { col: Math.floor(rank / rows), row: rank % rows };
+        if (p.fillOrder === 'right-left') {
+          return { col: cols - 1 - Math.floor(rank / rows), row: rank % rows };
+        }
+        return { col: rank % cols, row: rows - 1 - Math.floor(rank / cols) };
+      };
+
+      const cellColour = (rank) => {
+        const u = cells > 1 ? rank / (cells - 1) : 0;
+        const ca = hexToRgb(p.color);
+        const cb = hexToRgb(p.color2 || p.color);
+        return rgbToHex(ca.r + (cb.r - ca.r) * u,
+                        ca.g + (cb.g - ca.g) * u,
+                        ca.b + (cb.b - ca.b) * u);
+      };
+
+      // Where the piece being placed has got to on its way in. It enters from
+      // the edge the fill order comes from and travels to its resting cell.
+      let moving = null;
+      if (p.drop !== false && filled < cells) {
+        const rank = Math.floor(filled);
+        const frac = filled - rank;
+        const target = rankCell(rank);
+        const horizontal = p.fillOrder === 'left-right' || p.fillOrder === 'right-left';
+        if (horizontal) {
+          const from = p.fillOrder === 'left-right' ? 0 : cols - 1;
+          moving = { rank, col: Math.round(from + (target.col - from) * frac), row: target.row };
+        } else {
+          const from = p.fillOrder === 'top-down' ? 0 : 0;   // always enters at the top
+          moving = { rank, col: target.col, row: Math.round(from + (target.row - from) * frac) };
+        }
+      }
+
       for (let i = 0; i < lights.length; i++) {
         if (mask && !mask[i]) continue;
         const l = lights[i];
         const col = Math.min(cols - 1, Math.floor(((l.x - b.minX) / b.w) * cols));
         const row = Math.min(rows - 1, Math.floor(((l.y - b.minY) / b.h) * rows));
         const rank = cellRank(col, row);
+        if (moving && col === moving.col && row === moving.row && rank >= filled) {
+          put(i, cellColour(moving.rank), Math.max(0, Math.min(1, p.dropTrail)));
+          continue;
+        }
         if (rank >= filled) continue;
         if (p.fillMode === 'wipe' && rank < filled - 1) continue;
-        // blend the two colours across the fill so the stack has depth
-        const u = cells > 1 ? rank / (cells - 1) : 0;
-        const ca = hexToRgb(p.color);
-        const cb = hexToRgb(p.color2 || p.color);
-        const hex = rgbToHex(ca.r + (cb.r - ca.r) * u,
-                             ca.g + (cb.g - ca.g) * u,
-                             ca.b + (cb.b - ca.b) * u);
         // the cell arriving right now eases in rather than popping
         const gain = Math.min(1, (filled - rank));
-        put(i, hex, gain);
+        put(i, cellColour(rank), gain);
+      }
+      return true;
+    }
+
+    if (p.type === 'marquee') {
+      // The classic theatre sign: every Nth light on, and the lit set steps
+      // along one place at a time. Reads as movement without a moving shape.
+      const order = orderedTargets(layer, lights, mask);
+      const n = order.length;
+      if (!n) return false;
+      const every = Math.max(2, Math.round(p.every));
+      const stepMs = Math.max(1, p.marqueeMs);
+      const shift = Math.floor(t / stepMs) % every;
+      for (let j = 0; j < n; j++) {
+        const lit = ((j - shift) % every + every) % every === 0;
+        if (lit) put(order[j], p.color, 1);
+        else if (p.offMode === 'colour') put(order[j], p.offColor, 1);
       }
       return true;
     }

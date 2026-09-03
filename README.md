@@ -191,7 +191,7 @@ sampled colours come back as whatever the shape's edges happened to cover.
 
 A **pattern layer** drives its tagged lights directly instead, with no shape and
 no pixel sampling, so `FF0000` really is `FF0000`. Add one from **+ Layer →
-Tagged patterns**:
+Start from a preset → Patterns**:
 
 - **Blink** — on for *N* ms, off for *M* ms. Off can be dark or a second colour.
 - **Chase** — steps through the lights in order, with an adjustable number lit
@@ -199,12 +199,21 @@ Tagged patterns**:
   `l_x_10`), top-to-bottom, left-to-right, or around the centre.
 - **Sparkle** — *N* lights lit at once, picked at random from a palette,
   re-picked on a timer, with an optional fading trail.
-- **Wave** — a brightness wave travelling across the real light positions, up
-  the playfield, across it, or outward from the centre. Wavelength, cycle time,
-  trough brightness and crest sharpness are all adjustable.
+- **Marquee** — a theatre sign: every *N*th light lit, with the lit set stepping
+  along one place at a time. It reads as movement without a moving shape, and it
+  suits a ring or a row far better than a scattered group.
+- **Wave** — a wave travelling across the real light positions, outward from the
+  centre by default, or up or across the playfield. Give it a **trough colour**
+  and it washes between two colours instead of just dimming (that needs trough
+  brightness above 0 to show at all). **Seamless loop** rounds the cycle to a
+  whole number of passes across the clip, so the wave does not jump when the
+  layer repeats — a wave left mid-stroke at the end is visible as a hitch every
+  cycle.
 - **Stack** — divides the lights into a grid and fills it cell by cell, bottom
-  up by default, blending between two colours as it climbs. Set it to *wipe* to
-  light only the leading cell instead.
+  up by default, blending between two colours as it climbs. With **Show pieces
+  falling** each cell travels in from the edge to its resting place rather than
+  appearing there, so you watch it land, Tetris-style. Set it to *wipe* to light
+  only the leading cell instead.
 - **Solid** — one colour, which the keyframe brightness can still fade.
 
 **Sparkle is random but repeatable.** It runs off a seeded generator keyed to
@@ -263,6 +272,26 @@ not exist on the new one.
 
 ---
 
+## Presets
+
+The preset dialog lists four groups, in this order:
+
+| Group | What is in it |
+|---|---|
+| **Patterns** | Chase, Chase up, Marquee, Sparkle, Wave, Stack up |
+| **Solid & blink** | Solid on, Blink 0.5s, Blink fast, Pulse, Colour fade |
+| **Wipes** | Sweep up, Sweep down, Wipe right, Diagonal wipe |
+| **Radial** | Rings, Radar sweep, Spinning bar, Rainbow spin, Starburst, Spiral |
+
+Patterns come first because they drive the lights directly, which reads far
+better on a sparse playfield than a shape sampled through it.
+
+The old *Motion* group (Dot chase, Comet, Zig-zag drop, Chevron march) is gone,
+along with a few near-duplicates: *Strobe* was Blink fast with extra steps,
+*Blank layer* was Solid on by another name — and *Build it step by step* is the
+better way to start an empty layer anyway — and *Flash once* was not worth its
+place. *Dot chase* did the same job as the Chase pattern, less well.
+
 ## Adding a layer
 
 The app opens with an empty show, and **New** clears back to one — nothing is
@@ -270,7 +299,7 @@ created that you did not ask for. The big **+ Add layer** button, and the empty
 state that greets you, both lead to the same five choices:
 
 - **Build it step by step** — the wizard, with a live preview
-- **Start from a preset** — sweeps, spins, chases, blinks, sparkles
+- **Start from a preset** — patterns first, then solids, wipes and radials
 - **Import an MPF show** — stack an existing show with new layers
 - **Surprise me** — add one random layer (same as the Roll button)
 
@@ -362,7 +391,7 @@ The layer it produces is an ordinary layer, so everything afterwards (dragging
 on the playfield, the timeline, animated shape parameters) works on it exactly
 as usual.
 
-Pattern layers — blink, chase, sparkle, wave, stack — are not in the wizard;
+Pattern layers — blink, chase, marquee, sparkle, wave, stack — are not in the wizard;
 they have a single panel already and their own one-click presets.
 
 ---

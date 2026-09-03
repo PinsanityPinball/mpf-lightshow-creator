@@ -504,7 +504,7 @@ export function layerStateAtTime(layer, timeMs) {
  */
 export function makePattern(over = {}) {
   return Object.assign({
-    type: 'blink',        // blink | chase | sparkle | wavy | stack | solid
+    type: 'blink',        // blink | chase | sparkle | wavy | stack | marquee | solid
     color: '#ff2020',
     onMs: 500,
     offMs: 500,
@@ -523,11 +523,18 @@ export function makePattern(over = {}) {
     life: 1,              // how many steps a sparkle stays before being replaced
     seed: 1,
     // wavy
-    axis: 'y',            // y | x | radial
+    axis: 'radial',       // radial | y | x - out from the centre reads best
     wavelength: 0.5,      // fraction of the group's extent per cycle
     periodMs: 1200,       // time for the wave to travel one wavelength
-    floorLevel: 0,        // brightness in the trough, 0..1
+    floorLevel: 0.25,     // brightness in the trough, 0..1
     sharpness: 1,         // >1 tightens the crest
+    waveColor2: '',       // trough colour; empty means dim the main colour
+    // Snap the period so a whole number of cycles fits the clip. Without it the
+    // wave is mid-stroke when the layer loops and the seam is visible as a jump.
+    loop: true,
+    // marquee
+    every: 3,             // one light in every N is lit
+    marqueeMs: 140,       // time before the lit set shifts along
     // stack
     cols: 4,
     rows: 6,
@@ -535,6 +542,10 @@ export function makePattern(over = {}) {
     fillOrder: 'bottom-up',   // bottom-up | top-down | left-right | right-left
     fillMode: 'fill',         // fill (cells stay lit) | wipe (only the leading cell)
     color2: '#2060ff',
+    // Tetris: show each cell travelling from the edge to its resting place
+    // instead of appearing there. dropTrail dims the moving cell.
+    drop: true,
+    dropTrail: 0.55,
   }, over);
 }
 

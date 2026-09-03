@@ -6,7 +6,147 @@ import { shapeDefaults } from './shapes.js';
 
 const S = (id, over) => Object.assign(shapeDefaults(id), over || {});
 
+/**
+ * Order the preset dialog lists groups in. Patterns come first because they
+ * light the lights directly - they are the ones that read well on a sparse
+ * playfield - and the shape-based groups follow.
+ */
+export const GROUP_ORDER = ['Patterns', 'Solid & blink', 'Wipes', 'Radial'];
+
 export const PRESETS = [
+  {
+    id: 'chase-names',
+    name: 'Chase',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Chase', durationMs: 3000,
+      pattern: { type: 'chase', color: c, stepMs: 120, width: 1, tail: 2, order: 'name' },
+    }),
+  },
+
+  {
+    id: 'chase-updown',
+    name: 'Chase up',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Chase up', durationMs: 3000,
+      pattern: { type: 'chase', color: c, stepMs: 100, width: 2, tail: 3,
+                 order: 'y', reverse: true },
+    }),
+  },
+
+  {
+    id: 'marquee',
+    name: 'Marquee',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Marquee', durationMs: 3000,
+      pattern: { type: 'marquee', color: c, every: 3, marqueeMs: 140, order: 'name' },
+    }),
+  },
+
+  {
+    id: 'sparkle',
+    name: 'Sparkle',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Sparkle', durationMs: 4000,
+      pattern: { type: 'sparkle', color: c, count: 4, stepMs: 120, life: 3, decay: 0.9,
+                 colors: [c, '#ffffff', '#ffd400'] },
+    }),
+  },
+
+  {
+    id: 'wavy',
+    name: 'Wave',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Wave', durationMs: 4000,
+      pattern: { type: 'wavy', color: c, axis: 'y', wavelength: 0.5,
+                 periodMs: 1200, floorLevel: 0, sharpness: 2 },
+    }),
+  },
+
+  {
+    id: 'stack',
+    name: 'Stack up',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Stack', durationMs: 2000,
+      pattern: { type: 'stack', color: c, color2: '#ffffff', cols: 4, rows: 6,
+                 fillMs: 2000, fillOrder: 'bottom-up', fillMode: 'fill' },
+    }),
+  },
+
+  {
+    id: 'solid-on',
+    name: 'Solid on',
+    group: 'Solid & blink',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Solid', durationMs: 1000,
+      pattern: { type: 'solid', color: c },
+    }),
+  },
+
+  {
+    id: 'blink-slow',
+    name: 'Blink 0.5s',
+    group: 'Solid & blink',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Blink', durationMs: 3000,
+      pattern: { type: 'blink', color: c, onMs: 500, offMs: 500 },
+    }),
+  },
+
+  {
+    id: 'blink-fast',
+    name: 'Blink fast',
+    group: 'Solid & blink',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Fast blink', durationMs: 2000,
+      pattern: { type: 'blink', color: c, onMs: 120, offMs: 120 },
+    }),
+  },
+
+  {
+    id: 'pulse',
+    name: 'Pulse (whole field)',
+    group: 'Solid & blink',
+    build: (c) => makeLayer({
+      name: 'Pulse', shapeId: 'halo', durationMs: 500, repeat: 2,
+      shapeParams: S('halo', { falloff: 1.4, core: 0.35 }),
+      keys: [
+        makeKey(0, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 0, ease: 'sine-out' }),
+        makeKey(0.35, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 1, ease: 'sine-in' }),
+        makeKey(1, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 0 }),
+      ],
+    }),
+  },
+
+  {
+    id: 'colour-fade',
+    name: 'Colour fade (whole field)',
+    group: 'Solid & blink',
+    build: (c) => makeLayer({
+      name: 'Colour fade', shapeId: 'bar', durationMs: 1500, colorLerp: 'hsl',
+      shapeParams: S('bar', { len: 3, thick: 3 }),
+      keys: [
+        makeKey(0, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: c }),
+        makeKey(0.5, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: rotateHue(c, 120) }),
+        makeKey(1, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: rotateHue(c, 240) }),
+      ],
+    }),
+  },
+
   {
     id: 'sweep-up',
     name: 'Sweep up',
@@ -20,6 +160,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'sweep-down',
     name: 'Sweep down',
@@ -33,6 +174,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'wipe-right',
     name: 'Wipe right',
@@ -46,6 +188,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'diag-wipe',
     name: 'Diagonal wipe',
@@ -73,6 +216,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'ring-in',
     name: 'Collapsing ring',
@@ -86,6 +230,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'radar',
     name: 'Radar sweep',
@@ -99,6 +244,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'spinner',
     name: 'Spinning bar',
@@ -112,6 +258,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'rainbow-spin',
     name: 'Rainbow spin',
@@ -126,6 +273,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'starburst',
     name: 'Starburst',
@@ -139,6 +287,7 @@ export const PRESETS = [
       ],
     }),
   },
+
   {
     id: 'spiral',
     name: 'Spiral spin',
@@ -153,212 +302,6 @@ export const PRESETS = [
     }),
   },
 
-  {
-    id: 'chase',
-    name: 'Dot chase',
-    group: 'Motion',
-    build: (c) => makeLayer({
-      name: 'Dot chase', shapeId: 'dots', durationMs: 1000,
-      shapeParams: S('dots', { count: 10, radius: 0.45, size: 0.09, arc: 120, fade: 0.85, feather: 0.5 }),
-      keys: [
-        makeKey(0, { x: 0.5, y: 0.5, rot: 0, sx: 1.4, sy: 1.4, color: c }),
-        makeKey(1, { x: 0.5, y: 0.5, rot: 360, sx: 1.4, sy: 1.4, color: c }),
-      ],
-    }),
-  },
-  {
-    id: 'comet',
-    name: 'Comet',
-    group: 'Motion',
-    build: (c) => makeLayer({
-      name: 'Comet', shapeId: 'beam', durationMs: 850,
-      shapeParams: S('beam', { len: 0.7, near: 0.02, far: 0.22, fade: 0.9, feather: 0.7 }),
-      keys: [
-        makeKey(0, { x: 0.15, y: 1.05, rot: -60, sx: 0.7, sy: 0.7, color: c, ease: 'sine-out' }),
-        makeKey(0.5, { x: 0.5, y: 0.45, rot: -90, sx: 0.8, sy: 0.8, color: c, ease: 'sine-in' }),
-        makeKey(1, { x: 0.85, y: -0.05, rot: -120, sx: 0.7, sy: 0.7, color: c, alpha: 0.2 }),
-      ],
-    }),
-  },
-  {
-    id: 'zigzag',
-    name: 'Zig-zag drop',
-    group: 'Motion',
-    build: (c) => makeLayer({
-      name: 'Zig-zag drop', shapeId: 'halo', durationMs: 1200,
-      shapeParams: S('halo', { falloff: 2.4, core: 0.06 }),
-      keys: [
-        makeKey(0, { x: 0.2, y: -0.05, sx: 0.35, sy: 0.35, color: c }),
-        makeKey(0.25, { x: 0.75, y: 0.25, sx: 0.35, sy: 0.35, color: c }),
-        makeKey(0.5, { x: 0.25, y: 0.5, sx: 0.35, sy: 0.35, color: c }),
-        makeKey(0.75, { x: 0.8, y: 0.75, sx: 0.35, sy: 0.35, color: c }),
-        makeKey(1, { x: 0.3, y: 1.05, sx: 0.35, sy: 0.35, color: c }),
-      ],
-    }),
-  },
-  {
-    id: 'chevrons',
-    name: 'Chevron march',
-    group: 'Motion',
-    build: (c) => makeLayer({
-      name: 'Chevron march', shapeId: 'chevron', durationMs: 900,
-      shapeParams: S('chevron', { count: 4, thick: 0.09, spread: 0.26, angle: 70, fade: 0.6 }),
-      keys: [
-        makeKey(0, { x: 0.5, y: 1.15, rot: -90, sx: 1.0, sy: 1.0, color: c }),
-        makeKey(1, { x: 0.5, y: -0.15, rot: -90, sx: 1.0, sy: 1.0, color: c }),
-      ],
-    }),
-  },
-
-  {
-    id: 'pulse',
-    name: 'Pulse (whole field)',
-    group: 'Flashes',
-    build: (c) => makeLayer({
-      name: 'Pulse', shapeId: 'halo', durationMs: 500, repeat: 2,
-      shapeParams: S('halo', { falloff: 1.4, core: 0.35 }),
-      keys: [
-        makeKey(0, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 0, ease: 'sine-out' }),
-        makeKey(0.35, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 1, ease: 'sine-in' }),
-        makeKey(1, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 0 }),
-      ],
-    }),
-  },
-  {
-    id: 'strobe',
-    name: 'Strobe',
-    group: 'Flashes',
-    build: (c) => makeLayer({
-      name: 'Strobe', shapeId: 'bar', durationMs: 200, repeat: 5,
-      shapeParams: S('bar', { len: 3, thick: 3 }),
-      keys: [
-        makeKey(0, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: c, alpha: 1, ease: 'hold' }),
-        makeKey(0.35, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: c, alpha: 0, ease: 'hold' }),
-        makeKey(1, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: c, alpha: 0 }),
-      ],
-    }),
-  },
-  {
-    id: 'colour-fade',
-    name: 'Colour fade (whole field)',
-    group: 'Flashes',
-    build: (c) => makeLayer({
-      name: 'Colour fade', shapeId: 'bar', durationMs: 1500, colorLerp: 'hsl',
-      shapeParams: S('bar', { len: 3, thick: 3 }),
-      keys: [
-        makeKey(0, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: c }),
-        makeKey(0.5, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: rotateHue(c, 120) }),
-        makeKey(1, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: rotateHue(c, 240) }),
-      ],
-    }),
-  },
-  {
-    id: 'blink-slow',
-    name: 'Blink 0.5s',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Blink', durationMs: 3000,
-      pattern: { type: 'blink', color: c, onMs: 500, offMs: 500 },
-    }),
-  },
-  {
-    id: 'blink-fast',
-    name: 'Blink fast',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Fast blink', durationMs: 2000,
-      pattern: { type: 'blink', color: c, onMs: 120, offMs: 120 },
-    }),
-  },
-  {
-    id: 'flash-once',
-    name: 'Flash once',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Flash', durationMs: 250,
-      pattern: { type: 'blink', color: c, onMs: 150, offMs: 100 },
-    }),
-  },
-  {
-    id: 'chase-names',
-    name: 'Chase',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Chase', durationMs: 3000,
-      pattern: { type: 'chase', color: c, stepMs: 120, width: 1, tail: 2, order: 'name' },
-    }),
-  },
-  {
-    id: 'chase-updown',
-    name: 'Chase up',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Chase up', durationMs: 3000,
-      pattern: { type: 'chase', color: c, stepMs: 100, width: 2, tail: 3,
-                 order: 'y', reverse: true },
-    }),
-  },
-  {
-    id: 'sparkle',
-    name: 'Sparkle',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Sparkle', durationMs: 4000,
-      pattern: { type: 'sparkle', color: c, count: 4, stepMs: 120, life: 3, decay: 0.9,
-                 colors: [c, '#ffffff', '#ffd400'] },
-    }),
-  },
-  {
-    id: 'wavy',
-    name: 'Wave',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Wave', durationMs: 4000,
-      pattern: { type: 'wavy', color: c, axis: 'y', wavelength: 0.5,
-                 periodMs: 1200, floorLevel: 0, sharpness: 2 },
-    }),
-  },
-  {
-    id: 'stack',
-    name: 'Stack up',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Stack', durationMs: 2000,
-      pattern: { type: 'stack', color: c, color2: '#ffffff', cols: 4, rows: 6,
-                 fillMs: 2000, fillOrder: 'bottom-up', fillMode: 'fill' },
-    }),
-  },
-  {
-    id: 'solid-on',
-    name: 'Solid on',
-    group: 'Tagged patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Solid', durationMs: 1000,
-      pattern: { type: 'solid', color: c },
-    }),
-  },
-  {
-    id: 'blank',
-    name: 'Blank layer',
-    group: 'Basic',
-    build: (c) => makeLayer({
-      name: 'Layer', shapeId: 'circle', durationMs: 1000,
-      shapeParams: S('circle', { feather: 0.4 }),
-      keys: [
-        makeKey(0, { x: 0.5, y: 0.8, sx: 0.3, sy: 0.3, color: c }),
-        makeKey(1, { x: 0.5, y: 0.2, sx: 0.3, sy: 0.3, color: c }),
-      ],
-    }),
-  },
 ];
 
 function rotateHue(hex, deg) {

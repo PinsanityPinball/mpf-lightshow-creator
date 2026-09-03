@@ -9,7 +9,7 @@ import { ShowRenderer, preloadShapeImages, loadShapeImage, layerMask } from './r
 import { Stage } from './stage.js';
 import { Timeline } from './timeline.js';
 import { Inspector, shapeThumb } from './inspector.js';
-import { PRESETS, PRESET_COLOURS } from './presets.js';
+import { PRESETS, PRESET_COLOURS, GROUP_ORDER } from './presets.js';
 import { pickFile, baseName, shortPath, isAbsolute } from './filebrowser.js';
 
 // Sentinel value for the "Browse..." entry in the Map and Tags dropdowns. Not a
@@ -1100,11 +1100,13 @@ class App {
     body.appendChild(swatches);
 
     const groups = new Map();
+    for (const g of GROUP_ORDER) groups.set(g, []);   // fixed order, Patterns first
     for (const p of PRESETS) {
       if (!groups.has(p.group)) groups.set(p.group, []);
       groups.get(p.group).push(p);
     }
     for (const [group, items] of groups) {
+      if (!items.length) continue;
       body.appendChild(el('div', { class: 'sec', text: group }));
       const grid = el('div', { class: 'shape-grid' });
       grid.style.gridTemplateColumns = 'repeat(5, 1fr)';
@@ -1147,7 +1149,7 @@ class App {
     const rand = (lo, hi) => lo + Math.random() * (hi - lo);
     const tagNames = this.tags.map((t) => t.tag).filter((t) => t !== 'all');
 
-    const preset = pick(PRESETS.filter((p) => p.id !== 'blank'));
+    const preset = pick(PRESETS);
     const layer = preset.build(pick(PRESET_COLOURS));
 
     // addLayer starts it at 0; we just choose how long it runs
@@ -1480,6 +1482,40 @@ function patternThumb(pattern) {
       g.arc(6 + i * 6, 17, 2.6, 0, Math.PI * 2);
       g.fill();
     }
+  } else if (t === 'marquee') {
+    // every third dot lit, twice over
+    for (let i = 0; i < 9; i++) {
+      g.globalAlpha = i % 3 === 0 ? 1 : 0.18;
+      g.beginPath();
+      g.arc(4 + i * 3.3, 17, 1.9, 0, Math.PI * 2);
+      g.fill();
+    }
+  } else if (t === 'wavy') {
+    g.globalAlpha = 1;
+    g.strokeStyle = '#8fd8ff';
+    g.lineWidth = 2;
+    g.beginPath();
+    for (let x = 3; x <= 31; x++) {
+      const y = 17 + Math.sin((x - 3) / 28 * Math.PI * 2) * 7;
+      if (x === 3) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+  } else if (t === 'stack') {
+    // a filled floor with one piece still on its way down
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col < 4; col++) {
+        g.globalAlpha = 1;
+        g.fillRect(4 + col * 7, 24 - row * 6, 5, 4);
+      }
+    }
+    g.globalAlpha = 0.5;
+    g.fillRect(11, 6, 5, 4);
+  } else if (t === 'sparkle') {
+    const pts = [[8, 9], [22, 7], [15, 17], [26, 20], [7, 24], [19, 27]];
+    pts.forEach(([x, y], i) => {
+      g.globalAlpha = 1 - i * 0.13;
+      g.beginPath(); g.arc(x, y, 2.4, 0, Math.PI * 2); g.fill();
+    });
   } else if (t === 'solid') {
     g.globalAlpha = 1;
     g.beginPath(); g.arc(17, 17, 8, 0, Math.PI * 2); g.fill();

@@ -644,6 +644,7 @@ export class Inspector {
       ['sparkle', 'Sparkle (random lights)'],
       ['wavy', 'Wave across the lights'],
       ['stack', 'Stack / fill a grid'],
+      ['marquee', 'Marquee (every Nth light)'],
       ['solid', 'Solid colour'],
     ], (v) => edit('pattern type', () => { p.type = v; this.buildLayer(); }))));
     if (p.type !== 'sparkle') {
@@ -671,8 +672,19 @@ export class Inspector {
 
     if (p.type === 'wavy') {
       root.appendChild(field('Travels', selectBox(p.axis, [
-        ['y', 'Up the playfield'], ['x', 'Across the playfield'], ['radial', 'Out from the centre'],
+        ['radial', 'Out from the centre'],
+        ['y', 'Up the playfield'], ['x', 'Across the playfield'],
       ], (v) => edit('wave axis', () => { p.axis = v; this.buildLayer(); }))));
+      root.appendChild(field('Trough colour', colorInput(p.waveColor2 || p.color,
+        this.live(`${layer.id}:pwc2`, 'trough colour', (v) => { p.waveColor2 = v; }))));
+      if (p.waveColor2) {
+        root.appendChild(el('div', { class: 'btn-row' }, [
+          button('One colour only', () => edit('one colour', () => {
+            p.waveColor2 = '';
+            this.buildLayer();
+          }), 'small'),
+        ]));
+      }
       root.appendChild(slider('Wavelength', p.wavelength, { min: 0.05, max: 2, step: 0.05 },
         this.live(`${layer.id}:pwl`, 'wavelength', (v) => { p.wavelength = v; })));
       root.appendChild(field('Cycle (ms)', numberInput(p.periodMs, 50, 60000, 50,
@@ -681,8 +693,26 @@ export class Inspector {
         this.live(`${layer.id}:pfloor`, 'trough', (v) => { p.floorLevel = v; })));
       root.appendChild(slider('Crest sharpness', p.sharpness, { min: 0.2, max: 6, step: 0.1 },
         this.live(`${layer.id}:psharp`, 'sharpness', (v) => { p.sharpness = v; })));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Seamless loop', p.loop !== false, (v) => edit('wave loop', () => {
+          p.loop = v;
+          this.buildLayer();
+        })),
+      ]));
+      const cycles = Math.max(1, Math.round(layer.durationMs / Math.max(1, p.periodMs)));
       root.appendChild(hint('The wave runs across the real light positions, so it follows '
-        + 'your playfield layout rather than a drawn shape.'));
+        + 'your playfield layout rather than a drawn shape.'
+        + (p.loop !== false
+          ? ` Seamless loop rounds the cycle to ${cycles} whole `
+            + `${cycles === 1 ? 'pass' : 'passes'} across the clip `
+            + `(${Math.round(layer.durationMs / cycles)} ms each), so the wave does not `
+            + 'jump when the layer repeats.'
+          : ' Without the loop the wave is mid-stroke when the clip ends, which shows '
+            + 'as a jump each time it repeats.')));
+      if (p.waveColor2) {
+        root.appendChild(hint('With a trough colour the wave washes between two colours. '
+          + 'It needs Trough brightness above 0 to be visible at all.'));
+      }
     }
 
     if (p.type === 'stack') {
@@ -701,8 +731,48 @@ export class Inspector {
       root.appendChild(field('Mode', selectBox(p.fillMode, [
         ['fill', 'Cells stay lit'], ['wipe', 'Only the leading cell'],
       ], (v) => edit('fill mode', () => { p.fillMode = v; this.buildLayer(); }))));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Show pieces falling', p.drop !== false, (v) => edit('stack drop', () => {
+          p.drop = v;
+          this.buildLayer();
+        })),
+      ]));
+      if (p.drop !== false) {
+        root.appendChild(slider('Falling brightness', p.dropTrail, { min: 0.05, max: 1, step: 0.05 },
+          this.live(`${layer.id}:pdrop`, 'falling brightness', (v) => { p.dropTrail = v; })));
+      }
       root.appendChild(hint(`${p.cols} x ${p.rows} = ${p.cols * p.rows} cells over `
-        + `${p.fillMs} ms, so a cell lands every ${Math.round(p.fillMs / (p.cols * p.rows))} ms.`));
+        + `${p.fillMs} ms, so a cell lands every ${Math.round(p.fillMs / (p.cols * p.rows))} ms.`
+        + (p.drop !== false
+          ? ' Each piece travels in from the edge to its resting cell rather than '
+            + 'appearing there, so you watch it fall into place.'
+            + (p.cols * p.rows > 40 ? ' With this many cells each fall is very quick - '
+              + 'fewer cells or a longer fill time makes the movement readable.' : '')
+          : '')));
+    }
+
+    if (p.type === 'marquee') {
+      root.appendChild(slider('One light in every', p.every, { min: 2, max: 8, step: 1 },
+        this.live(`${layer.id}:pevery`, 'every', (v) => { p.every = Math.round(v); })));
+      root.appendChild(field('Step (ms)', numberInput(p.marqueeMs, 20, 5000, 10,
+        (v) => edit('marquee step', () => {
+          p.marqueeMs = Math.max(20, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(field('Order by', selectBox(p.order, [
+        ['name', 'Light name'], ['x', 'Left to right'], ['y', 'Bottom to top'],
+        ['angle', 'Around the centre'],
+      ], (v) => edit('marquee order', () => { p.order = v; this.buildLayer(); }))));
+      root.appendChild(field('When off', selectBox(p.offMode, [
+        ['dark', 'Dark'], ['colour', 'Another colour'],
+      ], (v) => edit('off mode', () => { p.offMode = v; this.buildLayer(); }))));
+      if (p.offMode === 'colour') {
+        root.appendChild(field('Off colour', colorInput(p.offColor,
+          this.live(`${layer.id}:pmoff`, 'off colour', (v) => { p.offColor = v; }))));
+      }
+      root.appendChild(hint('A theatre sign: every Nth light is lit and the lit set steps '
+        + 'along one place at a time. It reads as movement without a moving shape, and it '
+        + 'suits a ring or a row of lights better than a scattered group.'));
     }
 
     if (p.type === 'blink') {
