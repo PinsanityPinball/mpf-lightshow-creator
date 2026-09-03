@@ -111,6 +111,26 @@ show contains.
 
 ---
 
+## The Layer panel
+
+The right-hand **Layer** panel is split into sub-tabs, mirroring the wizard's
+steps, so you are only ever looking at one concern at a time:
+
+| Tab | Holds |
+|---|---|
+| **Shape** | shape picker, its parameters, size presets, start/end scale |
+| **Path** | path preset, turns, stretch, randomise start/end |
+| **Motion** | position, orientation start/end, easing |
+| **Colour** | start/end colour, brightness, colour space |
+| **Lights** | which lights this layer drives (all, or by tag), exclusions |
+| **Timing** | start, duration, repeat, blend, show sample rate |
+
+The layer's name, its on/off checkbox and **Save** stay pinned above the tabs.
+Pattern and imported-show layers get their own two-tab set instead.
+
+**Surprise me** adds *one* random layer at the playhead and leaves the rest of
+your show alone — roll it repeatedly to build something up, or undo it.
+
 ## Light maps and tags
 
 The light map is read once and held in memory. If you edit `lightmaps/*.yaml`
