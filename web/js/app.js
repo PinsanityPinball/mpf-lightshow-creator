@@ -1290,6 +1290,19 @@ class App {
     }
 
     const s = result.stats;
+    // A show with no steps is a comment-only file. MPF refuses to load it
+    // ("Cannot load empty show") and a bad show in a machine folder aborts
+    // start-up, so this must not be writable - it was three clicks from a
+    // fresh app: pick a map, Export, Save.
+    if (!s.frames) {
+      hideModal();
+      status(this.project.layers.length
+        ? 'Nothing is lit anywhere in this show, so there is nothing to export. '
+          + 'Check the layers are enabled and aimed at lights that exist.'
+        : 'This show has no layers yet, so there is nothing to export.', 'err');
+      this.setPlaying(wasPlaying);
+      return;
+    }
     const filename = suggestFilename(this.project.name);
     const nameInput = el('input', { type: 'text', value: filename });
 

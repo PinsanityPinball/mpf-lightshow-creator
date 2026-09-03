@@ -29,6 +29,14 @@ STEP_RE = re.compile(r"^-\s*(time|duration)\s*:\s*(.+?)\s*$")
 LIGHTS_RE = re.compile(r"^  (lights|light|leds)\s*:\s*$")
 ENTRY_RE = re.compile(r"^    ('[^']+'|\"[^\"]+\"|[A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$")
 SUBKEY_RE = re.compile(r"^      ([a-z_]+)\s*:\s*(.+)$")
+# MPF's own named colours. A bare lowercase word used to pass as a colour,
+# so `l_a: banana` reported OK.
+NAMED_COLOURS = {
+    "white", "black", "red", "green", "blue", "yellow", "orange", "purple",
+    "magenta", "cyan", "pink", "lime", "off", "on", "gray", "grey", "silver",
+    "maroon", "olive", "navy", "teal", "aqua", "fuchsia",
+}
+
 HEX_RE = re.compile(r"^'?([0-9A-Fa-f]{6})'?$")
 VERSION_RE = re.compile(r"^#show_version=(\d+)\s*$")
 
@@ -124,9 +132,9 @@ def check(path, expect_version, fps):
             state = "entry"
             if value in ("", "stop", "on", "off"):
                 continue
-            if not HEX_RE.match(value) and not re.match(r"^[a-z_]+$", value):
-                errors.append("line %d: %s: expected 6-digit hex, a colour name "
-                              "or 'stop', got %r" % (n, name, value))
+            if not HEX_RE.match(value) and value.lower() not in NAMED_COLOURS:
+                errors.append("line %d: %s: expected 6-digit hex, a known colour "
+                              "name or 'stop', got %r" % (n, name, value))
             continue
 
         m = SUBKEY_RE.match(line)
@@ -134,10 +142,22 @@ def check(path, expect_version, fps):
             if state != "entry":
                 errors.append("line %d: nested key outside a light entry" % n)
             key, value = m.group(1), m.group(2).strip()
-            if key == "color" and not HEX_RE.match(value) and not re.match(r"^[a-z_]+$", value):
-                errors.append("line %d: color expected hex or a name, got %r" % (n, value))
-            if key == "fade" and not re.match(r"^\d+\s*m?s?$", value):
-                errors.append("line %d: fade expected e.g. '100ms', got %r" % (n, value))
+            if key == "color" and not HEX_RE.match(value) \
+                    and value.lower() not in NAMED_COLOURS:
+                errors.append("line %d: color expected hex or a known colour name, "
+                              "got %r" % (n, value))
+            if key == "fade":
+                # Both letters optional made a bare number pass, and MPF reads a
+                # letterless time as SECONDS - so `fade: 100` is a 100 second
+                # fade, not 100 ms.
+                if not re.match(r"^\d+(\.\d+)?\s*(ms|s)$", value):
+                    if re.match(r"^\d+(\.\d+)?$", value):
+                        errors.append("line %d: fade %r has no unit, so MPF reads it as "
+                                      "%s SECONDS - write '%sms' if you meant "
+                                      "milliseconds" % (n, value, value, value))
+                    else:
+                        errors.append("line %d: fade expected e.g. '100ms', got %r"
+                                      % (n, value))
             continue
 
         errors.append("line %d: cannot parse %r" % (n, line))
@@ -150,8 +170,17 @@ def check(path, expect_version, fps):
     # --- timing, resolved the way MPF resolves it
     kinds = set(k for _, k, _ in steps)
     if kinds == {"time", "duration"}:
-        errors.append("mixes 'time:' and 'duration:' steps; MPF rejects a 'time:' "
-                      "in the step after one carrying a 'duration:'")
+        # MPF only objects to a `time:` in the step *after* a `duration:`;
+        # duration-then-time in the other order is legal, so flagging any
+        # mixture at all was a false positive.
+        offending = [n for i, (n, k, _) in enumerate(steps)
+                     if k == "time" and i > 0 and steps[i - 1][1] == "duration"]
+        if offending:
+            errors.append("line %s: a 'time:' step follows a 'duration:' step, "
+                          "which MPF rejects" % offending[0])
+        else:
+            warnings.append("mixes 'time:' and 'duration:' steps; legal in this "
+                            "order, but easier to read as one or the other")
 
     total_s = 0.0
     if steps and kinds == {"duration"}:
@@ -162,6 +191,8 @@ def check(path, expect_version, fps):
                 errors.append("line %d: unparseable duration %r" % (n, value)); continue
             if secs == 0:
                 errors.append("line %d: step has 0 duration, which MPF rejects" % n)
+            elif secs < 0:
+                errors.append("line %d: step has a negative duration (%.3fs)" % (n, secs))
             total_s += secs
     elif steps and kinds == {"time"}:
         # duration of step N comes from the time on step N+1
@@ -175,6 +206,15 @@ def check(path, expect_version, fps):
                     errors.append("line %d: unparseable time %r" % (n, nxt)); continue
             else:
                 secs = 1.0      # MPF defaults a trailing step to 1 unit
+            # MPF derives a step's duration from the next step's time and
+            # raises on a zero one exactly as it does for `duration:`. A
+            # negative means the times run backwards, which poisons MPF's
+            # running total and errors on the step after.
+            if secs == 0:
+                errors.append("line %d: step has 0 duration, which MPF rejects" % n)
+            elif secs < 0:
+                errors.append("line %d: step has a negative duration (%.3fs) - the "
+                              "times are not in order" % (n, secs))
             total_s += secs
         rate = fps or 30
         notes.append("relative '+N' times are parsed as SECONDS: this show runs "

@@ -32,7 +32,7 @@ import sys
 import threading
 import time
 import webbrowser
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,8 +47,11 @@ CLIENT = {
     "seen": False,    # a page has connected at least once
     "deadline": 0.0,  # set by /api/bye so a closed window exits sooner
 }
-IDLE_TIMEOUT = 25.0   # no beats for this long -> quit
-BYE_GRACE = 6.0       # after a page says it is going -> quit unless one returns
+# Generous, because a hidden tab is throttled to one timer per minute by the
+# browser and a sleeping laptop stops beating entirely. Quitting on a tab the
+# user merely switched away from is far worse than lingering.
+IDLE_TIMEOUT = 150.0  # no traffic at all for this long -> quit
+BYE_GRACE = 8.0       # after a page says it is going -> quit unless one returns
 
 DIRS = {
     "web": "web",
@@ -104,6 +107,11 @@ def external_yaml(name):
     except Exception:
         return None
     if not os.path.isabs(expanded):
+        return None
+    # A UNC path makes Windows authenticate to whatever host is named, which a
+    # web page could trigger cross-origin purely for the side effect. Local
+    # drives only.
+    if expanded.startswith("\\\\") or expanded.startswith("//"):
         return None
     if not expanded.lower().endswith((".yaml", ".yml")):
         return None
@@ -326,6 +334,14 @@ def discover_machines(limit=400):
 # monitor.yaml light-map parsing
 # ---------------------------------------------------------------------------
 
+def _unquote_key(name):
+    """Light names keep their quotes in YAML; the show would carry them too."""
+    n = name.strip()
+    if len(n) >= 2 and n[0] == n[-1] and n[0] in "\"'":
+        return n[1:-1]
+    return n
+
+
 def parse_lightmap(text):
     """Pull the `light:` section out of an MPF monitor yaml.
 
@@ -371,7 +387,10 @@ def parse_lightmap(text):
 
         if value == "":
             flush()
-            state["current"] = {"name": key}
+            # a quoted key in the YAML is a light called `l_left`, not `"l_left"`;
+            # keeping the quotes carried them into the exported show, where the
+            # name matches nothing and the YAML may not even parse
+            state["current"] = {"name": _unquote_key(key)}
             continue
 
         current = state["current"]
@@ -380,7 +399,10 @@ def parse_lightmap(text):
 
         if key in ("x", "y", "size", "rotation"):
             try:
-                current[key] = float(value)
+                num = float(value)
+                if num != num or num in (float("inf"), float("-inf")):
+                    continue          # NaN/infinity is not a position
+                current[key] = num
             except ValueError:
                 pass
         elif key == "shape":
@@ -756,8 +778,33 @@ class Handler(SimpleHTTPRequestHandler):
 
     # -- helpers ----------------------------------------------------------
 
+    # A read that never completes would otherwise hold the handler - and with
+    # it httpd.shutdown() - open forever, which is the orphaned process the
+    # watchdog exists to prevent.
+    timeout = 30
+
+    def touch_client(self):
+        """Any request at all proves the page is still there.
+
+        Counting only /api/ping meant one slow request could starve the
+        heartbeat and the watchdog would shut the server down mid-use.
+        """
+        CLIENT["last"] = time.time()
+        CLIENT["seen"] = True
+        CLIENT["deadline"] = 0.0
+
     def send_json(self, obj, status=200):
-        body = json.dumps(obj).encode("utf-8")
+        # allow_nan=False: a light map carrying `x: nan` or `1e400` would
+        # otherwise emit bare NaN/Infinity, which JSON.parse rejects, and the
+        # page shows an opaque parse error instead of a useful message.
+        try:
+            body = json.dumps(obj, allow_nan=False).encode("utf-8")
+        except ValueError:
+            body = json.dumps({
+                "error": "that file contains numbers this app cannot use "
+                         "(NaN or infinity) - check the light positions",
+            }).encode("utf-8")
+            status = 400
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -853,6 +900,7 @@ class Handler(SimpleHTTPRequestHandler):
     # -- routing ----------------------------------------------------------
 
     def do_GET(self):
+        self.touch_client()
         parsed = urlparse(self.path)
         route = posixpath.normpath(unquote(parsed.path))
         query = parse_qs(parsed.query)
@@ -876,6 +924,19 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_error_json(500, "%s: %s" % (type(exc).__name__, exc))
 
     def do_POST(self):
+        self.touch_client()
+        # A text/plain POST is a CORS "simple request", so any web page the user
+        # happens to have open can fire one at this server without a preflight
+        # and without being able to read the reply. It cannot read anything, but
+        # it could still write - point the export folder somewhere and drop a
+        # file in it. Requests carrying a foreign Origin are refused; the app's
+        # own fetches send either no Origin or our own.
+        origin = self.headers.get("Origin")
+        if origin:
+            host = self.headers.get("Host") or ""
+            allowed = ("http://%s" % host, "https://%s" % host)
+            if origin not in allowed:
+                return self.send_error_json(403, "cross-origin request refused")
         parsed = urlparse(self.path)
         route = posixpath.normpath(unquote(parsed.path))
         try:
@@ -1269,7 +1330,14 @@ def watch_client(httpd, keep_alive):
         if now - CLIENT["last"] > IDLE_TIMEOUT:
             print("\nwindow gone; exiting")
             break
+    # shutdown() cannot return while a handler is still occupying the single
+    # serve_forever loop, so give it a moment and then leave the hard way
+    # rather than lingering as exactly the orphan this is here to avoid.
     threading.Thread(target=httpd.shutdown, daemon=True).start()
+    def _hard_exit():
+        time.sleep(5.0)
+        os._exit(0)
+    threading.Thread(target=_hard_exit, daemon=True).start()
 
 
 def main():
@@ -1296,7 +1364,9 @@ def main():
     httpd = None
     for _ in range(20):
         try:
-            httpd = HTTPServer(("127.0.0.1", port), Handler)
+            # threading: one slow request must not stall every other one,
+            # including the heartbeat the watchdog is listening for
+            httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
             break
         except OSError:
             port += 1
