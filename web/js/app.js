@@ -10,6 +10,11 @@ import { Stage } from './stage.js';
 import { Timeline } from './timeline.js';
 import { Inspector, shapeThumb } from './inspector.js';
 import { PRESETS, PRESET_COLOURS } from './presets.js';
+import { pickFile, baseName, shortPath, isAbsolute } from './filebrowser.js';
+
+// Sentinel value for the "Browse..." entry in the Map and Tags dropdowns. Not a
+// path, so it can never collide with a real file name.
+const BROWSE = '\u0000browse';
 import { PATHS, applyPath, TRANSFORMS, randomStart, randomEnd, SIZE_PRESETS, applySize } from './paths.js';
 import {
   makeEffect, listEffects, loadEffect, saveEffect, deleteEffect, instantiate, tagCoverage,
@@ -90,22 +95,26 @@ class App {
       this.shapeFiles = shapes.shapes || [];
       this.config = config || {};
       this.tagFiles = tagfiles.tagfiles || [];
+      this.mapFiles = maps.lightmaps || [];
+      // absolute paths picked with the browser, remembered across sessions
+      this.externalMaps = maps.external || [];
+      this.externalTags = tagfiles.external || [];
 
-      const sel = $('#lightMap');
-      clear(sel);
-      for (const m of maps.lightmaps) sel.appendChild(el('option', { value: m, text: m }));
+      this.rebuildMapSelect();
       this.rebuildTagFileSelect();
 
-      if (maps.lightmaps.length) {
+      const choices = this.mapFiles.concat(this.externalMaps);
+      if (choices.length) {
         // last used map wins, then monitor.yaml, then whatever is first
         const remembered = this.config.lightMap;
-        const preferred = maps.lightmaps.includes(remembered) ? remembered
-          : (maps.lightmaps.includes('monitor.yaml') ? 'monitor.yaml' : maps.lightmaps[0]);
-        sel.value = preferred;
-        const keepTags = this.tagFiles.includes(this.config.tagFile) ? this.config.tagFile : null;
+        const preferred = choices.includes(remembered) ? remembered
+          : (choices.includes('monitor.yaml') ? 'monitor.yaml' : choices[0]);
+        const allTags = this.tagFiles.concat(this.externalTags);
+        const keepTags = allTags.includes(this.config.tagFile) ? this.config.tagFile : null;
         await this.loadLightMap(preferred, keepTags, { remember: false });
       } else {
-        status('No light maps found. Drop a monitor.yaml into the lightmaps folder.', 'err');
+        status('No light map yet. Use the Map dropdown to browse for your '
+          + 'monitor.yaml, or drop one into the lightmaps folder.', 'err');
       }
 
       await this.loadFolders();
@@ -468,6 +477,16 @@ class App {
     this.setMapStale(false);
     this.project.lightMap = name;
     this.project.tagFile = data.tagFile || '';
+    // an external path may not be an option yet on first load
+    if (isAbsolute(name) && !(this.externalMaps || []).includes(name)) {
+      this.externalMaps = [name].concat(this.externalMaps || []);
+      this.rebuildMapSelect();
+    }
+    if (isAbsolute(this.project.tagFile)
+        && !(this.externalTags || []).includes(this.project.tagFile)) {
+      this.externalTags = [this.project.tagFile].concat(this.externalTags || []);
+      this.rebuildTagFileSelect();
+    }
     $('#lightMap').value = name;
     $('#tagFile').value = this.project.tagFile;
 
@@ -526,12 +545,90 @@ class App {
     }
   }
 
+  /**
+   * Both dropdowns list files in lightmaps/ first, then anything picked from
+   * elsewhere on disk, then a Browse entry. External files show as their file
+   * name with the full path on hover - the raw path is far too wide for a
+   * toolbar select.
+   */
+  rebuildMapSelect() {
+    const sel = $('#lightMap');
+    clear(sel);
+    for (const m of this.mapFiles || []) {
+      sel.appendChild(el('option', { value: m, text: m }));
+    }
+    const ext = this.externalMaps || [];
+    if (ext.length) {
+      const grp = el('optgroup', { label: 'Elsewhere on disk' });
+      for (const p of ext) {
+        grp.appendChild(el('option', { value: p, text: shortPath(p), title: p }));
+      }
+      sel.appendChild(grp);
+    }
+    sel.appendChild(el('option', { value: BROWSE, text: 'Browse for a file...' }));
+    sel.value = this.project.lightMap || (this.mapFiles || [])[0] || BROWSE;
+  }
+
   rebuildTagFileSelect() {
     const sel = $('#tagFile');
     clear(sel);
     sel.appendChild(el('option', { value: '', text: '(none)' }));
     for (const t of this.tagFiles || []) sel.appendChild(el('option', { value: t, text: t }));
+    const ext = this.externalTags || [];
+    if (ext.length) {
+      const grp = el('optgroup', { label: 'Elsewhere on disk' });
+      for (const p of ext) {
+        grp.appendChild(el('option', { value: p, text: shortPath(p), title: p }));
+      }
+      sel.appendChild(grp);
+    }
+    sel.appendChild(el('option', { value: BROWSE, text: 'Browse for a file...' }));
     sel.value = this.project.tagFile || '';
+  }
+
+  /** Folder to open the browser in: beside the current map, if there is one. */
+  browseStart() {
+    const cur = this.project.lightMap || '';
+    if (isAbsolute(cur)) return cur.replace(/[\\/][^\\/]*$/, '');
+    return '';
+  }
+
+  /**
+   * Picking "Browse..." in either dropdown. On cancel the select is put back
+   * the way it was, so the dropdown never sits on a non-choice.
+   */
+  async browseForMap() {
+    const path = await pickFile({
+      title: 'Choose a light map', kind: 'map', startAt: this.browseStart(),
+    });
+    if (!path) { this.rebuildMapSelect(); return; }
+    try {
+      await this.loadLightMap(path, null);
+      if (!(this.externalMaps || []).includes(path)) this.externalMaps.unshift(path);
+      this.rebuildMapSelect();
+      this.rebuildTagFileSelect();
+      status(`Using ${baseName(path)} - ${this.lights.length} lights, `
+        + `${this.tags.length} tags`, 'ok');
+    } catch (err) {
+      status('Could not read that file: ' + err.message, 'err');
+      this.rebuildMapSelect();
+    }
+  }
+
+  async browseForTags() {
+    const path = await pickFile({
+      title: 'Choose a tags file', kind: 'tags', startAt: this.browseStart(),
+    });
+    if (!path) { this.rebuildTagFileSelect(); return; }
+    try {
+      await this.loadLightMap(this.project.lightMap, path);
+      if (!(this.externalTags || []).includes(path)) this.externalTags.unshift(path);
+      this.rebuildTagFileSelect();
+      status(`Using ${baseName(path)} - ${this.tags.length} tags`, 'ok');
+    } catch (err) {
+      status('Could not read that file: ' + err.message, 'err');
+      this.rebuildTagFileSelect();
+    }
   }
 
   /** Destinations the export can write to: exports/, plus known machines. */
@@ -1341,9 +1438,11 @@ class App {
   wireChrome() {
     $('#showName').addEventListener('change', (e) => { this.project.name = e.target.value; });
     $('#lightMap').addEventListener('change', async (e) => {
+      if (e.target.value === BROWSE) return this.browseForMap();
       try { await this.loadLightMap(e.target.value); } catch (err) { status(err.message, 'err'); }
     });
     $('#tagFile').addEventListener('change', async (e) => {
+      if (e.target.value === BROWSE) return this.browseForTags();
       try {
         await this.loadLightMap(this.project.lightMap, e.target.value || null);
         const n = this.tags.length;

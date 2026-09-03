@@ -150,6 +150,27 @@ Two files describe your machine, and both are remembered between sessions:
 Pick both from the dropdowns in the top bar. A tags file is paired to a map
 automatically by stem, so `mymachine_monitor.yaml` finds `mymachine_lights.yaml`
 on its own.
+
+### Using files where they already are
+
+You do not have to copy anything into `lightmaps/`. Both dropdowns end with
+**Browse for a file...**, which opens a file browser; pick your machine's
+`monitor.yaml` and `lights.yaml` wherever they live and the app reads them in
+place. The absolute path is remembered, so they stay in the dropdown next time,
+listed under *Elsewhere on disk* as `monitor.yaml - <folder>` so a file that
+shares its name with one in `lightmaps/` is still distinguishable.
+
+Reading in place is the point: a copy goes stale the moment you edit the real
+one. Because the app holds the path rather than a duplicate, the freshness check
+still notices when the file changes on disk and offers to reload it.
+
+Stem-pairing works out there too - an external `monitor.yaml` looks for its
+partner beside itself, not in `lightmaps/`. The browser also labels what it
+finds, since a machine's `lights.yaml` and a `monitor.yaml` both open with a
+light block: the one with per-light `x`/`y` is the *light map*, the one with
+`tags:` is the *tags* file.
+
+The browser is read-only and lists only folders and `.yaml`/`.yml` files.
 Tags split on commas *and* whitespace, so a missing comma (`tags: all, 5x 4x`)
 still yields separate tags instead of one unusable compound.
 

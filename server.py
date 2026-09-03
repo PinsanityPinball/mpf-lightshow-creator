@@ -57,6 +57,10 @@ CONFIG = {
     "exportTarget": "exports",
     "background": "",
     "folders": [],
+    # Light maps and tag files picked from elsewhere on disk, kept as absolute
+    # paths so they stay listed in the dropdowns without being copied in.
+    "recentMaps": [],
+    "recentTags": [],
 }
 
 # Names we are willing to read or write. Keeps path traversal out.
@@ -71,6 +75,106 @@ def path_for(kind, name=None):
     if not SAFE_NAME.match(name) or name in (".", ".."):
         raise ValueError("unsafe name: %r" % name)
     return os.path.join(base, name)
+
+
+def external_yaml(name):
+    """An absolute path to a YAML file the user picked, or None.
+
+    Files under lightmaps/ are referred to by bare name and guarded by
+    SAFE_NAME. A name that is instead an absolute path is one the user chose in
+    the file browser, so it is allowed - but only ever a .yaml/.yml, never an
+    arbitrary file, and it has to actually exist.
+    """
+    if not name:
+        return None
+    try:
+        expanded = os.path.expandvars(os.path.expanduser(unquote(name)))
+    except Exception:
+        return None
+    if not os.path.isabs(expanded):
+        return None
+    if not expanded.lower().endswith((".yaml", ".yml")):
+        return None
+    full = os.path.abspath(expanded)
+    return full if os.path.isfile(full) else None
+
+
+def lightmap_path(name):
+    """Resolve a light map or tag file name to a full path.
+
+    Accepts either a bare name inside lightmaps/ or an absolute path to a YAML
+    file elsewhere on disk.
+    """
+    return external_yaml(name) or path_for("lightmaps", name)
+
+
+def remember_external(key, path):
+    """Keep an externally-picked file in the dropdown for next time."""
+    if not path or not os.path.isabs(path):
+        return
+    recent = [p for p in CONFIG.get(key, [])
+              if os.path.normcase(p) != os.path.normcase(path)]
+    recent.insert(0, path)
+    CONFIG[key] = recent[:12]
+    save_config()
+
+
+def prune_external(key):
+    """Drop remembered paths whose file has since gone away."""
+    recent = [p for p in CONFIG.get(key, []) if os.path.isfile(p)]
+    if len(recent) != len(CONFIG.get(key, [])):
+        CONFIG[key] = recent
+        save_config()
+    return recent
+
+
+def browse_places():
+    """Sensible starting points: drives, home, and the app's own folders."""
+    out = []
+    home = os.path.expanduser("~")
+    if os.path.isdir(home):
+        out.append({"name": "Home", "path": home})
+    for label, sub in (("Desktop", "Desktop"), ("Documents", "Documents"),
+                       ("Downloads", "Downloads")):
+        full = os.path.join(home, sub)
+        if os.path.isdir(full):
+            out.append({"name": label, "path": full})
+
+    maps = path_for("lightmaps")
+    if os.path.isdir(maps):
+        out.append({"name": "This app's lightmaps folder", "path": maps})
+
+    if os.name == "nt":
+        for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive = "%s:\\" % letter
+            if os.path.isdir(drive):
+                out.append({"name": "%s: drive" % letter, "path": drive})
+    else:
+        out.append({"name": "/", "path": "/"})
+
+    # machine folders already known, since a monitor.yaml often lives in one
+    for folder in CONFIG.get("folders", []):
+        if os.path.isdir(folder):
+            out.append({"name": os.path.basename(folder) or folder, "path": folder})
+    return out
+
+
+def browse_crumbs(path):
+    """Breadcrumb trail for a path, root first."""
+    crumbs = []
+    head = os.path.abspath(path)
+    while True:
+        # no rstrip: on Windows "C:\\" is its own dirname, which is how the
+        # walk terminates. Stripping the separator gives "C:", a different
+        # string, and the loop emits the drive twice.
+        parent = os.path.dirname(head)
+        name = os.path.basename(head) or head
+        crumbs.append({"name": name, "path": head})
+        if not parent or parent == head:
+            break
+        head = parent
+    crumbs.reverse()
+    return crumbs
 
 
 def ensure_dirs():
@@ -337,8 +441,14 @@ def parse_light_tags(text):
 
 
 def find_tag_file(lightmap_name):
-    """Guess the lights.yaml that goes with a monitor.yaml, by stem."""
-    base = path_for("lightmaps")
+    """Guess the lights.yaml that goes with a monitor.yaml, by stem.
+
+    For a map picked from elsewhere on disk, the partner is looked for beside
+    it rather than in lightmaps/, and comes back as an absolute path.
+    """
+    ext = external_yaml(lightmap_name)
+    base = os.path.dirname(ext) if ext else path_for("lightmaps")
+    lightmap_name = os.path.basename(lightmap_name) if ext else lightmap_name
     stem = re.sub(r"\.(yaml|yml)$", "", lightmap_name, flags=re.I)
     stem = re.sub(r"(^|[_-])monitor([_-]|$)", r"\1", stem, flags=re.I).strip("_-")
     candidates = []
@@ -348,7 +458,7 @@ def find_tag_file(lightmap_name):
     for name in candidates:
         full = os.path.join(base, name)
         if os.path.isfile(full):
-            return name
+            return full if ext else name
     return None
 
 
@@ -357,7 +467,8 @@ def file_mtime(kind, name):
     if not name:
         return 0
     try:
-        return int(os.path.getmtime(path_for(kind, name)) * 1000)
+        full = lightmap_path(name) if kind == "lightmaps" else path_for(kind, name)
+        return int(os.path.getmtime(full) * 1000)
     except (OSError, ValueError):
         return 0
 
@@ -365,7 +476,10 @@ def file_mtime(kind, name):
 def load_tags(name):
     if not name:
         return {}
-    full = path_for("lightmaps", name)
+    try:
+        full = lightmap_path(name)
+    except ValueError:
+        return {}
     if not os.path.isfile(full):
         return {}
     with open(full, "r", encoding="utf-8", errors="replace") as fh:
@@ -382,12 +496,30 @@ def looks_like_tagfile(path):
 
 
 def looks_like_lightmap(path):
+    """True for a monitor.yaml - a light block that carries positions.
+
+    A machine's lights.yaml also opens with a "lights:" block, so the block
+    header alone is not enough to tell them apart. The thing that makes a file
+    a light *map* is per-light x/y, which is what this app samples against; a
+    lights.yaml has tags instead and no coordinates at all.
+    """
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            head = fh.read(4096)
+            head = fh.read(16384)
     except OSError:
         return False
-    return re.search(r"^(light|lights|leds):\s*$", head, re.M) is not None
+    if re.search(r"^(light|lights|leds):\s*$", head, re.M) is None:
+        return False
+    return re.search(r"^\s+x\s*:", head, re.M) is not None
+
+
+def sniff_kind(path):
+    """Label a YAML for the file browser: 'map', 'tags' or plain 'yaml'."""
+    if looks_like_lightmap(path):
+        return "map"
+    if looks_like_tagfile(path):
+        return "tags"
+    return "yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +762,65 @@ class Handler(SimpleHTTPRequestHandler):
     def send_error_json(self, status, message):
         self.send_json({"error": message}, status)
 
+    # -- file browser -----------------------------------------------------
+
+    def handle_browse(self, query):
+        """List one folder so the UI can walk the disk and pick a YAML.
+
+        Read-only, and only ever reports directories plus .yaml/.yml files -
+        the browser exists to find a monitor.yaml, not to expose the disk.
+        """
+        raw = (query.get("path") or [""])[0]
+        want = (query.get("kind") or ["any"])[0]
+
+        if not raw:
+            return self.send_json({
+                "path": "", "parent": "", "crumbs": [],
+                "dirs": browse_places(), "files": [], "atRoot": True,
+            })
+
+        try:
+            path = os.path.abspath(os.path.expandvars(os.path.expanduser(raw)))
+        except Exception:
+            return self.send_error_json(400, "bad path")
+        if not os.path.isdir(path):
+            return self.send_error_json(404, "no such folder: %s" % raw)
+
+        dirs, files = [], []
+        sniffed = 0
+        try:
+            entries = sorted(os.listdir(path), key=lambda n: n.lower())
+        except OSError as exc:
+            return self.send_error_json(403, "cannot read that folder: %s" % exc)
+
+        for name in entries:
+            if name.startswith("."):
+                continue
+            full = os.path.join(path, name)
+            try:
+                if os.path.isdir(full):
+                    dirs.append({"name": name, "path": full})
+                elif name.lower().endswith((".yaml", ".yml")):
+                    kind = "yaml"
+                    # sniffing costs a read, so only do it for a sane number
+                    if sniffed < 80:
+                        sniffed += 1
+                        kind = sniff_kind(full)
+                    if want == "any" or kind in ("yaml", want):
+                        files.append({"name": name, "path": full, "kind": kind,
+                                      "mtime": int(os.path.getmtime(full) * 1000)})
+            except OSError:
+                continue   # a permission wall mid-listing is not fatal
+
+        parent = os.path.dirname(path)
+        if parent == path or not parent:
+            parent = ""   # already at a drive root or /
+
+        return self.send_json({
+            "path": path, "parent": parent, "crumbs": browse_crumbs(path),
+            "dirs": dirs, "files": files, "atRoot": False,
+        })
+
     def read_json_body(self):
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
@@ -748,15 +939,21 @@ class Handler(SimpleHTTPRequestHandler):
                 for n in sorted(os.listdir(base)):
                     if n.lower().endswith((".yaml", ".yml")) and looks_like_lightmap(os.path.join(base, n)):
                         names.append(n)
-            return self.send_json({"lightmaps": names})
+            return self.send_json({"lightmaps": names,
+                                   "external": prune_external("recentMaps")})
 
         if route == "/api/lightmap":
             name = (query.get("name") or [""])[0]
             if not name:
                 return self.send_error_json(400, "name required")
-            path = path_for("lightmaps", name)
+            try:
+                path = lightmap_path(name)
+            except ValueError as exc:
+                return self.send_error_json(400, str(exc))
             if not os.path.isfile(path):
                 return self.send_error_json(404, "no such light map: %s" % name)
+            if os.path.isabs(name):
+                remember_external("recentMaps", path)
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 lights = parse_lightmap(fh.read())
 
@@ -764,6 +961,8 @@ class Handler(SimpleHTTPRequestHandler):
             requested = (query.get("tags") or [None])[0]
             tag_file = requested if requested else find_tag_file(name)
             tag_map = load_tags(tag_file) if tag_file else {}
+            if tag_file and os.path.isabs(tag_file):
+                remember_external("recentTags", tag_file)
             all_tags = {}
             matched = 0
             for light in lights:
@@ -803,7 +1002,11 @@ class Handler(SimpleHTTPRequestHandler):
                 for n in sorted(os.listdir(base)):
                     if n.lower().endswith((".yaml", ".yml")) and looks_like_tagfile(os.path.join(base, n)):
                         names.append(n)
-            return self.send_json({"tagfiles": names})
+            return self.send_json({"tagfiles": names,
+                                   "external": prune_external("recentTags")})
+
+        if route == "/api/browse":
+            return self.handle_browse(query)
 
         if route == "/api/effects":
             base = path_for("effects")
