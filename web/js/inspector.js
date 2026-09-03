@@ -1,6 +1,7 @@
 // Builds the four right-hand panels. Everything writes straight into the
 // project and asks the app to redraw.
 
+import { pickFile } from './filebrowser.js';
 import { SHAPES, SHAPE_BY_ID, shapeDefaults } from './shapes.js';
 import {
   EASE_NAMES, makeKey, invalidateKeys, projectDuration, frameCount, layerEndMs,
@@ -428,13 +429,15 @@ export class Inspector {
     for (const f of data.discovered || []) {
       options.push([f.path, short(f.path) + '  (found)']);
     }
-    options.push(['__add__', 'Add a folder\u2026']);
+    options.push(['__browse__', 'Browse for a folder\u2026']);
+    options.push(['__add__', 'Type a path\u2026']);
 
     const current = app.destination();
     const sel = selectBox(
       options.some((o) => o[0] === current) ? current : 'exports',
       options,
       (v) => {
+        if (v === '__browse__') { this.browseForFolder(); return; }
         if (v === '__add__') { this.showAddFolder(wrap); return; }
         app.setDestination(v);
       },
@@ -457,6 +460,19 @@ export class Inspector {
         + 'listed as "(found)". Picking one remembers it.'));
     }
     return wrap;
+  }
+
+  /** Walk the disk for a machine folder, rather than typing its path. */
+  async browseForFolder() {
+    const app = this.app;
+    const current = app.destination();
+    const path = await pickFile({
+      title: 'Choose an export folder', mode: 'folder',
+      startAt: current === 'exports' ? '' : current,
+    });
+    if (!path) { this.buildExport(); return; }
+    // setDestination validates the folder and reports why if it will not work
+    app.setDestination(path);
   }
 
   /** Inline row for typing a path the scan did not find. */

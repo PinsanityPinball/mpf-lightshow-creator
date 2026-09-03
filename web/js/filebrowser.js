@@ -18,10 +18,12 @@ const KIND_LABEL = { map: 'light map', tags: 'tags', yaml: 'yaml' };
  * @param {object} opts
  * @param {string} opts.title    heading for the modal
  * @param {string} opts.kind     'map' | 'tags' | 'any' - what to highlight
+ * @param {string} opts.mode     'file' (default) or 'folder'
  * @param {string} opts.startAt  folder to open in, if any
  */
 export function pickFile(opts = {}) {
   const kind = opts.kind || 'any';
+  const folderMode = opts.mode === 'folder';
   return new Promise((resolve) => {
     let settled = false;
     let chosen = null;
@@ -30,18 +32,19 @@ export function pickFile(opts = {}) {
     const crumbs = el('div', { class: 'fb-crumbs' });
     const list = el('div', { class: 'fb-list' });
     const foot = el('div', { class: 'fb-chosen', text: 'Nothing selected yet.' });
-    const useBtn = button('Use this file', () => done(chosen), 'primary');
+    const useBtn = button(folderMode ? 'Use this folder' : 'Use this file',
+      () => done(chosen), 'primary');
     useBtn.disabled = true;
 
+    const HINT = {
+      map: 'Pick your monitor.yaml. It stays where it is - the app reads it in place.',
+      tags: 'Pick your lights.yaml. It stays where it is - the app reads it in place.',
+      folder: 'Open the folder you want, then use it. Your MPF machine folder is '
+        + 'the one containing config/ - shows go into its shows/ subfolder.',
+      any: 'Pick a YAML file.',
+    };
     const body = el('div', { class: 'fb' }, [
-      el('div', {
-        class: 'hint',
-        text: kind === 'map'
-          ? 'Pick your monitor.yaml. It stays where it is - the app reads it in place.'
-          : (kind === 'tags'
-            ? 'Pick your lights.yaml. It stays where it is - the app reads it in place.'
-            : 'Pick a YAML file.'),
-      }),
+      el('div', { class: 'hint', text: folderMode ? HINT.folder : (HINT[kind] || HINT.any) }),
       crumbs, list, foot,
     ]);
 
@@ -78,6 +81,14 @@ export function pickFile(opts = {}) {
         }));
       }
 
+      // in folder mode the folder you are standing in is the thing being picked
+      if (folderMode && data.path) {
+        chosen = data.path;
+        useBtn.disabled = false;
+        foot.textContent = data.path;
+        foot.classList.add('on');
+      }
+
       list.textContent = '';
       if (data.parent) {
         list.appendChild(el('div', {
@@ -93,7 +104,7 @@ export function pickFile(opts = {}) {
           el('span', { class: 'fb-name', text: d.name })]));
       }
 
-      for (const f of data.files || []) {
+      for (const f of (folderMode ? [] : data.files || [])) {
         const row = el('div', {
           class: 'fb-row file' + (f.kind === kind ? ' match' : ''), title: f.path,
         }, [
@@ -106,10 +117,12 @@ export function pickFile(opts = {}) {
         list.appendChild(row);
       }
 
-      if (!(data.dirs || []).length && !(data.files || []).length) {
+      if (!(data.dirs || []).length && (folderMode || !(data.files || []).length)) {
         list.appendChild(el('div', {
           class: 'fb-empty',
-          text: data.atRoot ? 'Nothing to show.' : 'No folders or YAML files here.',
+          text: data.atRoot ? 'Nothing to show.'
+            : (folderMode ? 'No subfolders here. You can still use this folder.'
+              : 'No folders or YAML files here.'),
         }));
       }
     }

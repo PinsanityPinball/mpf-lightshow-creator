@@ -371,9 +371,16 @@ class App {
 
   // ------------------------------------------------------------ layers
 
+  /**
+   * New layers start at 0, not at the playhead: a show should begin at the
+   * beginning, and landing a layer wherever the playhead happened to be left
+   * surprises anyone who scrubbed before adding. The effects library is the one
+   * case that is genuinely about a moment in time, and it inserts its own
+   * layers rather than coming through here.
+   */
   addLayer(layer) {
     this.pushUndo('add layer');
-    layer.startMs = Math.round(this.timeMs / this.snapMs()) * this.snapMs();
+    layer.startMs = 0;
     this.project.layers.push(layer);
     this.selectedLayerId = layer.id;
     this.selectedKeyIndex = 0;
@@ -1072,7 +1079,7 @@ class App {
         'Bring in a show you already have and stack it with new layers.',
         () => this.importShowDialog()),
       card('Surprise me',
-        'Add one random layer at the playhead. Roll again for another, or undo.',
+        'Add one random layer. Roll again for another, or undo.',
         () => this.randomLayer()),
     ]);
     showModal('Add a layer', body, [button('Cancel', hideModal)]);
@@ -1283,7 +1290,7 @@ class App {
     const preset = pick(PRESETS.filter((p) => p.id !== 'blank'));
     const layer = preset.build(pick(PRESET_COLOURS));
 
-    // addLayer drops it at the playhead; we just choose how long it runs
+    // addLayer starts it at 0; we just choose how long it runs
     layer.durationMs = Math.max(200, Math.round(rand(600, 3000) / 50) * 50);
 
     // a third of the time, aim it at a tag instead of everything
@@ -1450,6 +1457,7 @@ class App {
       } catch (err) { status(err.message, 'err'); }
     });
 
+    $('#btnRoll').onclick = () => this.randomLayer();
     $('#btnReloadMap').onclick = () => this.reloadLightMap();
     $('#btnNew').onclick = () => this.newShow();
     $('#btnOpen').onclick = () => this.openDialog();
