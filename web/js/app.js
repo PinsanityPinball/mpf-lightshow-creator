@@ -1149,6 +1149,35 @@ class App {
    * where it is - the path is remembered and Save writes back to it, the same
    * bargain the light map makes.
    */
+  /**
+   * Save under a new name, leaving the original where it was.
+   *
+   * This is how one show becomes the starting point for another: open it,
+   * change it, then save it somewhere else. Without this the only way to keep
+   * the original intact was to remember not to press Save.
+   */
+  async saveAs() {
+    const name = ($('#showName').value || 'untitled').trim();
+    const suggested = suggestFilename(name).replace(/\.yaml$/, '.json');
+    const here = this.savedPath ? this.savedPath.replace(/[\\/][^\\/]*$/, '') : '';
+    const path = await pickFile({
+      title: 'Save show as', kind: 'show', mode: 'save',
+      defaultName: suggested, startAt: here || this.browseStart(),
+    });
+    if (!path) return;
+    try {
+      const res = await apiPost('/api/show', {
+        name: baseName(path), path, project: serialiseProject(this.project),
+      });
+      this.savedName = res.name;
+      // From here on this is the file being edited, so plain Save follows it.
+      this.savedPath = res.external ? res.path : null;
+      status(`Saved to ${shortPath(res.path || res.name)}`, 'ok');
+    } catch (err) {
+      status('Save failed: ' + err.message, 'err');
+    }
+  }
+
   async openDialog() {
     let list = [];
     let recent = [];
@@ -1327,6 +1356,7 @@ class App {
         ['Ctrl + Z', 'Undo'],
         ['Ctrl + Shift + Z', 'Redo'],
         ['Ctrl + S', 'Save the show'],
+        ['Ctrl + Shift + S', 'Save it under a new name'],
         ['Ctrl + N', 'Add a layer'],
         ['Ctrl + D', 'Duplicate the layer'],
       ]),
@@ -1604,6 +1634,7 @@ class App {
     $('#btnNew').onclick = () => this.newShow();
     $('#btnOpen').onclick = () => this.openDialog();
     $('#btnSave').onclick = () => this.save();
+    $('#btnSaveAs').onclick = () => this.saveAs();
     $('#btnUndo').onclick = () => this.undo();
     $('#btnRedo').onclick = () => this.redo();
     $('#btnExport').onclick = () => this.doExport();
@@ -1700,7 +1731,11 @@ class App {
         if (e.shiftKey) this.redo(); else this.undo();
         return;
       }
-      if (ctrl && e.key.toLowerCase() === 's') { e.preventDefault(); this.save(); return; }
+      if (ctrl && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (e.shiftKey) this.saveAs(); else this.save();
+        return;
+      }
       if (ctrl && e.key.toLowerCase() === 'n') { e.preventDefault(); this.addLayerDialog(); return; }
       if (ctrl && e.key.toLowerCase() === 'd') { e.preventDefault(); this.duplicateLayer(); return; }
 

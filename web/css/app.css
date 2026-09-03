@@ -677,6 +677,16 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
 .fb-icon { width: 14px; text-align: center; color: var(--fg-dim); flex: none; }
 .fb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-kind { color: var(--fg-dim); font-size: 11px; flex: none; }
+.fb-save-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.fb-save-row label { color: var(--fg-dim); font-size: 12px; flex: none; }
+.fb-name-input {
+  flex: 1; padding: 5px 7px; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--bg3); color: var(--fg);
+}
+.fb-name-input:focus { outline: none; border-color: var(--accent); }
+/* Overwriting is the one destructive thing this dialog can do, so the button
+   stops looking like the safe default the moment the name matches a file. */
+.btn.primary.danger { background: #5a2020; border-color: var(--danger); color: #ffe4e4; }
 .fb-row.dir .fb-icon, .fb-row.up .fb-icon { color: var(--accent); }
 .fb-row.file { color: var(--fg-dim); }
 /* the kind of file this picker is actually after */
@@ -693,6 +703,8 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fb-chosen.on { color: var(--fg); border-color: var(--accent); }
+/* the same line, but saying something is about to be replaced */
+.fb-chosen.warn { color: #ffd9d9; border-color: var(--danger); background: #3a1a1a; }
 
 /* ---- advanced options fold --------------------------------------------- */
 .wiz-adv {
