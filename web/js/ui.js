@@ -173,3 +173,99 @@ export function apiPost(path, body) {
     body: JSON.stringify(body),
   });
 }
+
+/**
+ * A start/end pair of sliders for one value, with a badge that toggles between
+ * "static" (both ends equal) and animating across the clip.
+ *
+ * Lives here rather than in the wizard because the Layer panel offers the same
+ * controls; two implementations would drift in behaviour and appearance.
+ *
+ * @param {Function} [after]  called after each change, for a live preview.
+ */
+export function rangeRow(label, spec, current, apply, after) {
+  const state = { from: current.from, to: current.to };
+  // Linked means "one value, both ends". Dragging the start carries the end
+  // with it until you move the end yourself.
+  let linked = Math.abs(state.from - state.to) < 1e-9;
+  const halves = {};
+
+  // Snap to the step so an integer setting like Stripes/Count can only ever
+  // be a whole number, however it was reached.
+  const snap = (raw) => {
+    let v = Number(raw);
+    if (!Number.isFinite(v)) return null;
+    v = Math.max(spec.min, Math.min(spec.max, v));
+    if (spec.step) v = Math.round(v / spec.step) * spec.step;
+    return Number(v.toFixed(6));
+  };
+
+  const show = (key, v) => {
+    const h = halves[key];
+    if (!h) return;
+    if (document.activeElement !== h.r) h.r.value = v;
+    if (document.activeElement !== h.i) h.i.value = round(v, spec.step);
+  };
+
+  const mk = (key) => {
+    const i = el('input', {
+      type: 'number', class: 'val',
+      min: spec.min, max: spec.max, step: spec.step, value: round(state[key], spec.step),
+    });
+    const r = el('input', {
+      type: 'range', min: spec.min, max: spec.max, step: spec.step, value: state[key],
+    });
+    halves[key] = { i, r };
+
+    const push = (raw, src) => {
+      const v = snap(raw);
+      if (v === null) return;
+      state[key] = v;
+      if (key === 'to') linked = false;
+      if (key === 'from' && linked) { state.to = v; show('to', v); }
+      // update the sibling input only, never rebuild the panel: re-rendering
+      // here would tear the slider out from under the pointer mid-drag
+      if (src !== 'r') r.value = v;
+      // also correct the box when its own typed value was snapped
+      if (src !== 'n' || Number(i.value) !== v) i.value = round(v, spec.step);
+      apply(state.from, state.to);
+      if (after) after();
+      badge.textContent = linked ? 'static' : 'start → end';
+      badge.className = 'anim-btn' + (linked ? '' : ' on');
+    };
+    r.addEventListener('input', () => push(r.value, 'r'));
+    i.addEventListener('change', () => push(i.value, 'n'));
+    return el('div', { class: 'wiz-range-half' }, [r, i]);
+  };
+
+  const badge = el('button', {
+    class: 'anim-btn' + (linked ? '' : ' on'),
+    text: linked ? 'static' : 'start → end',
+    title: linked ? 'Same at both ends' : 'Animating across the clip',
+    onclick: () => {
+      if (linked) {
+        const mid = (spec.min + spec.max) / 2;
+        state.to = snap(state.from <= mid ? spec.max : spec.min);
+        linked = false;
+      } else {
+        state.to = state.from;
+        linked = true;
+      }
+      show('to', state.to);
+      apply(state.from, state.to);
+      badge.textContent = linked ? 'static' : 'start → end';
+      badge.className = 'anim-btn' + (linked ? '' : ' on');
+      if (after) after();
+    },
+  });
+
+  const fromHalf = mk('from');
+  const toHalf = mk('to');
+  return el('div', { class: 'wiz-range' }, [
+    el('div', { class: 'wiz-range-label' }, [el('span', { text: label }), badge]),
+    el('div', { class: 'wiz-range-pair' }, [
+      el('span', { class: 'muted', text: 'start' }), fromHalf,
+      el('span', { class: 'muted', text: 'end' }), toHalf,
+    ]),
+  ]);
+}

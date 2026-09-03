@@ -31,7 +31,7 @@ deliberately left out (see `.gitignore`), so on a fresh clone you supply:
    `lightmaps/`, so layers can target tags rather than individual lights.
 3. **A playfield image** *(optional)* — any PNG/JPG in `backgrounds/`.
 
-`shows/`, `exports/`, `imports/`, `effects/` and `config.json` are yours too —
+`shows/`, `exports/`, `imports/` and `config.json` are yours too —
 the server creates the empty folders on startup, so nothing needs setting up.
 
 Useful flags:
@@ -66,7 +66,6 @@ unusual. You can always point it at a specific interpreter yourself:
 | `backgrounds/` | Playfield images used as a tracing guide                          |
 | `imports/`     | MPF shows brought in for reuse                                    |
 | `shows/`       | Saved projects, as JSON                                           |
-| `effects/`     | Saved reusable effects, as JSON                                   |
 | `exports/`     | Generated MPF show YAML                                           |
 | `tools/`       | `check_show.py`, a validator for generated shows                  |
 
@@ -113,28 +112,33 @@ show contains.
 
 ## The Layer panel
 
-The right-hand **Layer** panel is split into sub-tabs, mirroring the wizard's
-steps, so you are only ever looking at one concern at a time:
+The right-hand **Layer** panel is split into sub-tabs, so you are only ever
+looking at one concern at a time. They are the **same seven steps the wizard
+walks, in the same order** — learn one and you know the other:
 
-| Tab | Holds |
+| Tab / step | Holds |
 |---|---|
-| **Shape** | shape picker, its parameters, size presets, start/end scale |
+| **Shape** | shape picker and its parameters |
 | **Path** | path preset, turns, stretch, randomise start/end |
 | **Motion** | position, orientation start/end, easing |
+| **Size** | size presets, start/end scale, separate width and height |
 | **Colour** | start/end colour, brightness, colour space |
 | **Lights** | which lights this layer drives (all, or by tag), exclusions |
 | **Timing** | start, duration, repeat, blend, show sample rate |
 
-The layer's name, its on/off checkbox and **Save** stay pinned above the tabs.
-Pattern and imported-show layers get their own two-tab set instead.
+Both are generated from one list in `web/js/steps.js`, so they cannot drift
+apart: renaming or reordering a step moves the wizard and the tabs together.
+The start/end slider pair is shared code too, so a control behaves identically
+in both places.
 
-**Roll** (beside Dup/Del/Effects) adds one random layer and leaves the rest of
+The layer's name and its on/off checkbox stay pinned above the tabs. Pattern and
+imported-show layers are not built this way and get their own two-tab set.
+
+**Roll** (beside Dup and Del) adds one random layer and leaves the rest of
 your show alone. Click it as many times as you like, or undo.
 
 New layers start at **0 ms**, not wherever the playhead is sitting — a show
-should begin at the beginning. The one exception is the effects library, which
-is explicitly about dropping something in at a moment, so it still inserts at
-the playhead.
+should begin at the beginning.
 
 ## Light maps and tags
 
@@ -267,7 +271,6 @@ state that greets you, both lead to the same five choices:
 
 - **Build it step by step** — the wizard, with a live preview
 - **Start from a preset** — sweeps, spins, chases, blinks, sparkles
-- **From my effects library** — anything you saved before
 - **Import an MPF show** — stack an existing show with new layers
 - **Surprise me** — add one random layer (same as the Roll button)
 
@@ -336,38 +339,11 @@ The breadcrumbs jump between steps in any order, and **Create layer** is
 available at any point — you never have to walk all seven.
 
 The layer it produces is an ordinary layer, so everything afterwards (dragging
-on the playfield, the timeline, animated shape parameters, saving it as an
-effect) works on it exactly as usual.
+on the playfield, the timeline, animated shape parameters) works on it exactly
+as usual.
 
 Pattern layers — blink, chase, sparkle, wave, stack — are not in the wizard;
 they have a single panel already and their own one-click presets.
-
----
-
-## Effects library
-
-Build a layer you like once, then reuse it. **Save as effect…** on the Layer tab
-stores the selected layer; **Save whole show…** stores all of them as one
-effect. **Library…** (also on the timeline toolbar, and inside + Layer) browses
-what you have saved, with a colour swatch, layer count, duration and any tags
-each one targets.
-
-Inserting drops an effect in at the playhead. A multi-layer effect keeps its
-internal timing — layers saved 800 ms apart stay 800 ms apart.
-
-Everything travels with the effect: shape, animated shape parameters,
-keyframes, pattern settings, blend mode and tag targets.
-
-**A saved sparkle looks the same every time you insert it.** Sparkle derives its
-randomness from the layer's identity, and an inserted layer needs a fresh id or
-selection would break. So an effect records the original identity as `seedKey`
-and the generator prefers that — meaning the sparkle you saved is the sparkle
-you get back, byte for byte.
-
-Two things do not travel between machines, because they cannot: tag targets and
-imported-show light names. Shape layers are position-based and fully portable.
-The library flags an effect whose tags are missing from the current light map,
-and inserting one tells you which tags did not resolve so you can retarget it.
 
 ---
 

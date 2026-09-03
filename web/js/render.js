@@ -490,8 +490,8 @@ export class ShowRenderer {
       const palette = (p.colors && p.colors.length) ? p.colors : [p.color];
       const step = Math.floor(t / stepMs);
       const phase = (t - step * stepMs) / stepMs;      // 0..1 through the step
-      // seedKey survives being saved as an effect and re-inserted; a plain
-      // layer has none and falls back to its id, so two sparkles still differ
+      // seedKey survives a save and reload; a plain layer has none and falls
+      // back to its id, so two sparkles in one show still differ
       const base = hashString(layer.seedKey || layer.id) ^ ((p.seed | 0) * 2654435761);
 
       // Every generation still alive contributes, so `life > 1` leaves trails.

@@ -2,10 +2,12 @@
 // project and asks the app to redraw.
 
 import { pickFile } from './filebrowser.js';
+import { LAYER_STEPS } from './steps.js';
 import { SHAPES, SHAPE_BY_ID, shapeDefaults } from './shapes.js';
 import {
   EASE_NAMES, makeKey, invalidateKeys, projectDuration, frameCount, layerEndMs,
   animateParam, unanimateParam, effectiveParams,
+  setScaleRange, scaleRange, scaleIsUniform,
 } from './project.js';
 import { showCoverage, layerMask } from './render.js';
 import {
@@ -15,6 +17,7 @@ import {
 import { orderedTargets } from './project.js';
 import {
   el, clear, field, slider, selectBox, checkbox, colorInput, button, section, hint,
+  rangeRow,
 } from './ui.js';
 
 const THUMB = 34;
@@ -89,10 +92,8 @@ export class Inspector {
     if (layer.kind === 'show') {
       return [['show', 'Show'], ['lights', 'Lights']];
     }
-    return [
-      ['shape', 'Shape'], ['path', 'Path'], ['motion', 'Motion'],
-      ['colour', 'Colour'], ['lights', 'Lights'], ['timing', 'Timing'],
-    ];
+    // same list the wizard walks, so its steps and these tabs stay aligned
+    return LAYER_STEPS.map((s) => [s.id, s.title]);
   }
 
   buildLayer() {
@@ -124,7 +125,6 @@ export class Inspector {
       checkbox('On', layer.enabled, (v) => edit('enable', () => {
         layer.enabled = v; app.rebuildHeads();
       })),
-      button('Save', () => app.saveEffectDialog(false), 'small'),
     ]));
 
     // ---- sub-tabs
@@ -150,6 +150,7 @@ export class Inspector {
       case 'path': this.panePath(pane, layer, edit); break;
       case 'motion': this.paneMotion(pane, layer, edit); break;
       case 'colour': this.paneColour(pane, layer, edit); break;
+      case 'size': this.paneSize(pane, layer, edit); break;
       case 'timing': this.paneTiming(pane, layer, edit); break;
       default: this.paneShape(pane, layer, edit); break;
     }
@@ -261,14 +262,58 @@ export class Inspector {
       ]));
     }
 
+  }
+
+  paneSize(root, layer, edit) {
+    const app = this.app;
+    const rx = scaleRange(layer, 'x');
+    const ry = scaleRange(layer, 'y');
+    const uniform = scaleIsUniform(layer);
+    const spec = { min: 0.02, max: 3, step: 0.01 };
+    const redraw = () => app.requestDraw();
+
     root.appendChild(section('Size'));
     root.appendChild(el('div', { class: 'btn-row' },
       SIZE_PRESETS.map((sz) => button(sz.label, () => edit('size ' + sz.label, () => {
         applySize(layer, sz.scale, true);
-        this.app.refreshInspector();
+        app.refreshInspector();
       }), 'small'))));
     root.appendChild(hint('Sets every keyframe to that size. The Keyframe tab sizes '
       + 'one keyframe on its own.'));
+
+    root.appendChild(section('Start and end'));
+    if (uniform) {
+      root.appendChild(rangeRow('Scale', spec, rx, (from, to) => {
+        app.pushUndo('scale', layer.id + ':scale');
+        setScaleRange(layer, from, to, 'both');
+        app.onProjectEdit({ light: true });
+      }, redraw));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        button('Separate width & height', () => edit('separate axes', () => {
+          setScaleRange(layer, rx.from, rx.to, 'x');
+          this.buildLayer();
+        }), 'small'),
+      ]));
+      root.appendChild(hint('Width and height move together. Give the two ends '
+        + 'different values to grow or shrink over the clip.'));
+    } else {
+      root.appendChild(rangeRow('Width', spec, rx, (from, to) => {
+        app.pushUndo('width', layer.id + ':scaleX');
+        setScaleRange(layer, from, to, 'x');
+        app.onProjectEdit({ light: true });
+      }, redraw));
+      root.appendChild(rangeRow('Height', spec, ry, (from, to) => {
+        app.pushUndo('height', layer.id + ':scaleY');
+        setScaleRange(layer, from, to, 'y');
+        app.onProjectEdit({ light: true });
+      }, redraw));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        button('Match height to width', () => edit('match axes', () => {
+          setScaleRange(layer, rx.from, rx.to, 'both');
+          this.buildLayer();
+        }), 'small'),
+      ]));
+    }
   }
 
   panePath(root, layer, edit) {

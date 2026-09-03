@@ -16,9 +16,6 @@ import { pickFile, baseName, shortPath, isAbsolute } from './filebrowser.js';
 // path, so it can never collide with a real file name.
 const BROWSE = '\u0000browse';
 import { PATHS, applyPath, TRANSFORMS, randomStart, randomEnd, SIZE_PRESETS, applySize } from './paths.js';
-import {
-  makeEffect, listEffects, loadEffect, saveEffect, deleteEffect, instantiate, tagCoverage,
-} from './effects.js';
 import { Wizard } from './wizard.js';
 import { buildShow, suggestFilename } from './exporter.js';
 import {
@@ -374,9 +371,7 @@ class App {
   /**
    * New layers start at 0, not at the playhead: a show should begin at the
    * beginning, and landing a layer wherever the playhead happened to be left
-   * surprises anyone who scrubbed before adding. The effects library is the one
-   * case that is genuinely about a moment in time, and it inserts its own
-   * layers rather than coming through here.
+   * surprises anyone who scrubbed before adding.
    */
   addLayer(layer) {
     this.pushUndo('add layer');
@@ -1072,9 +1067,6 @@ class App {
       card('Start from a preset',
         'Sweeps, spins, chases, blinks and sparkles you can drop in and adjust.',
         () => this.presetDialog()),
-      card('From my effects library',
-        'Anything you have saved before, dropped in at the playhead.',
-        () => this.effectsDialog()),
       card('Import an MPF show',
         'Bring in a show you already have and stack it with new layers.',
         () => this.importShowDialog()),
@@ -1141,138 +1133,6 @@ class App {
   openWizard() {
     if (!this.wizard) this.wizard = new Wizard(this);
     this.wizard.open();
-  }
-
-  // ------------------------------------------------------------ effects
-
-  /** Save the selected layer, or the whole show, as a reusable effect. */
-  saveEffectDialog(allLayers) {
-    const layers = allLayers ? this.project.layers : [this.selectedLayer()].filter(Boolean);
-    if (!layers.length) { status('Nothing to save', 'err'); return; }
-
-    const suggested = allLayers
-      ? (this.project.name || 'Show')
-      : layers[0].name;
-    const nameInput = el('input', { type: 'text', value: suggested });
-
-    const body = el('div', {}, [
-      el('div', { class: 'hint', text:
-        `Saving ${layers.length} layer${layers.length === 1 ? '' : 's'}. Everything comes `
-        + 'with it: shape, animated parameters, keyframes, pattern settings and tag targets.' }),
-      field('Name', nameInput),
-    ]);
-
-    const doSave = async (overwrite) => {
-      const raw = nameInput.value.trim();
-      if (!raw) { status('Give the effect a name', 'err'); return; }
-      const file = raw.replace(/[^A-Za-z0-9 ._()-]/g, '_') + '.json';
-      try {
-        const effect = makeEffect(raw, layers, this.project);
-        const res = await saveEffect(file, effect, overwrite);
-        if (res.exists && !overwrite) {
-          const ok = await confirmModal('Effect already exists',
-            `"${raw}" already exists. Replace it?`);
-          if (!ok) { status('Not saved', 'err'); return; }
-          return doSave(true);
-        }
-        hideModal();
-        status(`Saved effect "${raw}"`, 'ok');
-      } catch (err) {
-        status('Could not save: ' + err.message, 'err');
-      }
-    };
-
-    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(false); });
-    showModal('Save as effect', body, [
-      button('Cancel', hideModal),
-      button('Save', () => doSave(false), 'primary'),
-    ]);
-    nameInput.focus();
-    nameInput.select();
-  }
-
-  /** Insert a saved effect at the playhead. */
-  async insertEffect(file) {
-    try {
-      const effect = await loadEffect(file);
-      const layers = instantiate(effect, Math.round(this.renderTime()));
-      if (!layers.length) { status('That effect has no layers', 'err'); return; }
-
-      this.pushUndo('insert effect');
-      this.project.layers.push(...layers);
-      this.selectedLayerId = layers[0].id;
-      this.selectedKeyIndex = 0;
-      this.rebuildHeads();
-      this.inspector.refresh();
-      this.requestDraw();
-
-      const cov = tagCoverage(effect, this.tags);
-      if (!cov.ok) {
-        status(`Inserted "${effect.name}", but ${cov.missing.length} tag`
-          + `${cov.missing.length === 1 ? '' : 's'} are not in this light map: `
-          + cov.missing.slice(0, 4).join(', ')
-          + ' - those layers will drive nothing until you retarget them.', 'err');
-      } else {
-        status(`Inserted "${effect.name}" (${layers.length} layer`
-          + `${layers.length === 1 ? '' : 's'}) at ${Math.round(this.renderTime())} ms`, 'ok');
-      }
-    } catch (err) {
-      status('Could not insert: ' + err.message, 'err');
-    }
-  }
-
-  /** Browser for saved effects, with insert and delete. */
-  async effectsDialog() {
-    let effects = [];
-    try { effects = await listEffects(); } catch (err) { /* shown below */ }
-
-    const body = el('div');
-    if (!effects.length) {
-      body.appendChild(el('div', { class: 'empty', text:
-        'No saved effects yet. Build a layer you like, then use "Save as effect" '
-        + 'on the Layer tab.' }));
-    } else {
-      body.appendChild(el('div', { class: 'hint', text:
-        `Inserted at the playhead (${Math.round(this.renderTime())} ms), keeping each `
-        + 'effect\'s internal timing.' }));
-      const list = el('div', { class: 'file-list' });
-      for (const e of effects) {
-        const cov = tagCoverage({ layers: [{ target: { tags: e.tags } }] }, this.tags);
-        const sw = el('span', { class: 'swatch' });
-        sw.style.background = e.colour || '#4fc3f7';
-        const meta = `${e.layers} layer${e.layers === 1 ? '' : 's'}`
-          + (e.durationMs ? ` · ${Math.round(e.durationMs)} ms` : '')
-          + (e.tags.length ? ` · ${e.tags.join(', ')}` : '');
-        const row = el('div', { class: 'file-row' }, [
-          sw,
-          el('span', { class: 'grow' }, [
-            el('div', { text: e.name }),
-            el('div', { class: 'muted', style: 'font-size:11px', text: meta }),
-          ]),
-          cov.ok ? null : el('span', { class: 'muted', title: 'tags missing here', text: '⚠' }),
-          button('Insert', (ev) => {
-            ev.stopPropagation();
-            hideModal();
-            this.insertEffect(e.file);
-          }, 'small primary'),
-          button('×', async (ev) => {
-            ev.stopPropagation();
-            const ok = await confirmModal('Delete effect',
-              `Delete "${e.name}" permanently?`, 'Delete');
-            if (!ok) { this.effectsDialog(); return; }
-            await deleteEffect(e.file);
-            status(`Deleted "${e.name}"`, 'ok');
-            this.effectsDialog();
-          }, 'small danger'),
-        ]);
-        list.appendChild(row);
-      }
-      body.appendChild(list);
-    }
-    showModal('Effects library', body, [
-      button('Save current layer...', () => { hideModal(); this.saveEffectDialog(false); }),
-      button('Close', hideModal),
-    ]);
   }
 
   // ------------------------------------------------------------ random show
@@ -1499,7 +1359,6 @@ class App {
     $('#emptyPreset').onclick = () => this.presetDialog();
     $('#emptyRandom').onclick = () => this.randomLayer();
 
-    $('#btnEffects').onclick = () => this.effectsDialog();
     $('#btnDupLayer').onclick = () => this.duplicateLayer();
     $('#btnDelLayer').onclick = () => this.deleteLayer();
 

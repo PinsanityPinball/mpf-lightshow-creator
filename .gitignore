@@ -19,9 +19,6 @@ imports/
 # Playfield photos
 backgrounds/
 
-# Saved effect presets (yours, not the app's)
-effects/
-
 # Remembered folder/file choices, including absolute paths to your machine
 config.json
 

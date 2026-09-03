@@ -12,7 +12,6 @@ Folders (relative to this file unless --root is given):
     shapes/     PNG shape images
     lightmaps/  monitor.yaml style light position files
     shows/      saved projects (.json)
-    effects/    saved reusable effects (.json)
     imports/    MPF show YAML brought in for reuse
     exports/    generated MPF show YAML
     backgrounds/ playfield images used as a tracing guide
@@ -45,7 +44,6 @@ DIRS = {
     "imports": "imports",
     "exports": "exports",
     "backgrounds": "backgrounds",
-    "effects": "effects",
 }
 
 ROOT = HERE
@@ -225,21 +223,6 @@ def machine_shows_dir(folder=None, create=False):
     if create:
         os.makedirs(target, exist_ok=True)
     return target
-
-
-def _effect_colour(layers):
-    """A representative colour, for the swatch in the effects browser."""
-    for l in layers:
-        if l.get("kind") == "pattern":
-            p = l.get("pattern") or {}
-            if p.get("colors"):
-                return p["colors"][0]
-            if p.get("color"):
-                return p["color"]
-        for k in l.get("keys") or []:
-            if k.get("color"):
-                return k["color"]
-    return "#4fc3f7"
 
 
 def looks_like_machine(path):
@@ -1008,51 +991,6 @@ class Handler(SimpleHTTPRequestHandler):
         if route == "/api/browse":
             return self.handle_browse(query)
 
-        if route == "/api/effects":
-            base = path_for("effects")
-            out = []
-            if os.path.isdir(base):
-                for n in sorted(os.listdir(base)):
-                    if not n.endswith(".json"):
-                        continue
-                    try:
-                        with open(os.path.join(base, n), "r", encoding="utf-8") as fh:
-                            d = json.load(fh)
-                    except (OSError, ValueError):
-                        continue
-                    layers = d.get("layers", [])
-                    tags = set()
-                    for l in layers:
-                        t = l.get("target") or {}
-                        tags.update(t.get("tags") or [])
-                    out.append({
-                        "file": n,
-                        "name": d.get("name", n[:-5]),
-                        "group": d.get("group", "Saved"),
-                        "layers": len(layers),
-                        "kinds": sorted(set(l.get("kind", "shape") for l in layers)),
-                        "shapeId": layers[0].get("shapeId") if layers else None,
-                        "shapeParams": layers[0].get("shapeParams") if layers else None,
-                        "patternType": ((layers[0].get("pattern") or {}).get("type")
-                                        if layers and layers[0].get("kind") == "pattern" else None),
-                        "colour": _effect_colour(layers),
-                        "durationMs": d.get("durationMs", 0),
-                        "lightMap": d.get("lightMap", ""),
-                        "tags": sorted(tags),
-                        "created": d.get("created", ""),
-                    })
-            return self.send_json({"effects": out})
-
-        if route == "/api/effect":
-            name = (query.get("name") or [""])[0]
-            if not name:
-                return self.send_error_json(400, "name required")
-            path = path_for("effects", name)
-            if not os.path.isfile(path):
-                return self.send_error_json(404, "no such effect: %s" % name)
-            with open(path, "r", encoding="utf-8") as fh:
-                return self.send_json({"name": name, "effect": json.load(fh)})
-
         if route == "/api/shows":
             base = path_for("shows")
             names = sorted(n for n in os.listdir(base) if n.endswith(".json")) if os.path.isdir(base) else []
@@ -1141,33 +1079,6 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"ok": True, "folders": folders,
                                    "current": CONFIG.get("machineFolder", ""),
                                    "target": CONFIG.get("exportTarget", "exports")})
-
-        if route == "/api/effect":
-            name = body.get("name") or "effect"
-            if not name.endswith(".json"):
-                name += ".json"
-            if not SAFE_NAME.match(name):
-                return self.send_error_json(400, "unsafe name: %r" % name)
-            effect = body.get("effect") or {}
-            if not effect.get("layers"):
-                return self.send_error_json(400, "an effect needs at least one layer")
-            ensure_dirs()
-            path = path_for("effects", name)
-            existed = os.path.isfile(path)
-            if existed and not body.get("overwrite"):
-                return self.send_json({"ok": False, "exists": True, "name": name})
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump(effect, fh, indent=1)
-            return self.send_json({"ok": True, "name": name, "replaced": existed})
-
-        if route == "/api/effect-delete":
-            name = body.get("name") or ""
-            if not SAFE_NAME.match(name):
-                return self.send_error_json(400, "unsafe name")
-            path = path_for("effects", name)
-            if os.path.isfile(path):
-                os.remove(path)
-            return self.send_json({"ok": True})
 
         if route == "/api/show":
             name = body.get("name") or "untitled"
