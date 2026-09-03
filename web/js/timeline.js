@@ -2,7 +2,7 @@
 // scrubbable playhead. Replaces the original tool's "press P and hope".
 
 import {
-  projectDuration, invalidateKeys, makeKey, stateAt, layerFireTimes,
+  projectDuration, invalidateKeys, makeKey, stateAt, layerFireTimes, setLayerStart,
 } from './project.js';
 
 const ROW_H = 30;
@@ -187,13 +187,14 @@ export class Timeline {
     } else if (d.mode === 'clip') {
       let ms = this.xToMs(x) - d.grabMs;
       if (!e.altKey) ms = Math.round(ms / snap) * snap;
-      layer.startMs = Math.max(0, Math.round(ms));
+      // carries the layer's extra firings with it
+      setLayerStart(layer, ms);
     } else if (d.mode === 'clipL') {
       let ms = this.xToMs(x);
       if (!e.altKey) ms = Math.round(ms / snap) * snap;
       ms = Math.max(0, Math.min(ms, d.startMs + d.durationMs - snap));
       const delta = ms - d.startMs;
-      layer.startMs = Math.round(ms);
+      setLayerStart(layer, ms);
       layer.durationMs = Math.max(snap, Math.round(d.durationMs - delta));
     } else if (d.mode === 'clipR') {
       let ms = this.xToMs(x);

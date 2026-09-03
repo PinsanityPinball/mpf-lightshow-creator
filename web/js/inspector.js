@@ -6,7 +6,7 @@ import { LAYER_STEPS } from './steps.js';
 import { SHAPES, SHAPE_BY_ID, shapeDefaults } from './shapes.js';
 import {
   EASE_NAMES, makeKey, invalidateKeys, projectDuration, frameCount, layerEndMs,
-  layerFireTimes,
+  layerFireTimes, setLayerStart,
   animateParam, unanimateParam, effectiveParams,
   setScaleRange, scaleRange, scaleIsUniform, fadeState, setFades,
 } from './project.js';
@@ -338,8 +338,10 @@ export class Inspector {
 
     root.appendChild(el('div', { class: 'btn-row' }, [
       button('Shift to playhead', () => edit('shift repeats', () => {
-        const delta = Math.round(app.renderTime()) - times[0];
-        layer.at = times.map((t) => Math.max(0, t + delta));
+        // clamp the whole run, not each time separately: clamping individually
+        // collapsed early firings onto 0 and fired them twice at the same instant
+        const delta = Math.max(-times[0], Math.round(app.renderTime()) - times[0]);
+        layer.at = times.map((t) => t + delta);
         layer.startMs = layer.at[0];
         this.buildLayer();
         app.rebuildHeads();
@@ -351,6 +353,15 @@ export class Inspector {
       }), 'small danger'),
     ]));
 
+    // Vary walks a shape layer's own state - position, size, colour. A pattern
+    // drives lights from its own settings and never reads that state, so the
+    // controls would do nothing at all there.
+    if (layer.kind !== 'shape') {
+      root.appendChild(hint('Each firing of a pattern layer is identical. Varying '
+        + 'position, size or colour per firing only applies to shape layers.'));
+      return;
+    }
+
     // --- per-firing variation
     const v = layer.vary || {};
     root.appendChild(section('Vary each firing'));
@@ -359,6 +370,7 @@ export class Inspector {
         app.pushUndo('vary hue', `${layer.id}:varyhue`);
         layer.vary = Object.assign({}, layer.vary, { hue: val });
         if (!val) delete layer.vary.hue;
+        if (!Object.keys(layer.vary).length) layer.vary = null;
         app.onProjectEdit({ light: true });
       }));
     root.appendChild(hint(v.hue
@@ -384,11 +396,13 @@ export class Inspector {
       }));
       root.appendChild(field(label, box));
     };
-    posList('x', 'Across (0-1)');
-    posList('y', 'Up/down (0-1)');
-    posList('scale', 'Size');
-    root.appendChild(hint('Each list is cycled by firing number, so a few values cover '
-      + 'any number of firings. Empty means that property is the same every time.'));
+    posList('x', 'Nudge across');
+    posList('y', 'Nudge up/down');
+    posList('scale', 'Size multiplier');
+    root.appendChild(hint('Offsets, not fixed values: the layer keeps its own animation '
+      + 'and each firing is shifted by these. Across and up/down are added (0.1 is a '
+      + 'tenth of the playfield), size multiplies (0.5 is half). Each list cycles by '
+      + 'firing number, so a few values cover any number of firings.'));
   }
 
   paneSize(root, layer, edit) {
@@ -561,7 +575,7 @@ export class Inspector {
   paneTiming(root, layer, edit) {
     root.appendChild(section('Timing'));
     root.appendChild(field('Start (ms)', numberInput(layer.startMs, 0, 600000, 1,
-      (v) => edit('start', () => { layer.startMs = v; }))));
+      (v) => edit('start', () => { setLayerStart(layer, v); }))));
     root.appendChild(field('Length (ms)', numberInput(layer.durationMs, 16, 600000, 1,
       (v) => edit('length', () => { layer.durationMs = Math.max(16, v); }))));
     root.appendChild(field('Repeat', numberInput(layer.repeat || 1, 1, 200, 1,

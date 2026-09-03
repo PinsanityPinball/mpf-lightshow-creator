@@ -4,6 +4,7 @@
 import {
   makeProject, normaliseProject, serialiseProject, makeKey, makeShowLayer,
   projectDuration, frameCount, msPerFrame, invalidateKeys, stateAt, layerStateAtTime,
+  scaleLayerTimes,
 } from './project.js';
 import { ShowRenderer, preloadShapeImages, loadShapeImage, layerMask } from './render.js';
 import { Stage } from './stage.js';
@@ -799,7 +800,10 @@ class App {
     const k = targetMs / current;
     this.pushUndo('scale show length');
     for (const l of this.project.layers) {
-      l.startMs = Math.round(l.startMs * k);
+      // scaleLayerTimes moves every firing; startMs alone would leave an
+      // instanced layer's firings where they were while its clip moved
+      scaleLayerTimes(l, k);
+      if (!(l.at && l.at.length)) l.startMs = Math.round(l.startMs * k);
       l.durationMs = Math.max(16, Math.round(l.durationMs * k));
     }
     if (this.project.durationMs > 0) this.project.durationMs = Math.round(targetMs);

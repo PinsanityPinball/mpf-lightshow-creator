@@ -217,10 +217,16 @@ export function starterProject() {
  * timeline keep working on layers that have never heard of instancing.
  */
 export function layerFireTimes(layer) {
-  const at = layer.at;
+  // Imported shows replay their own baked frames off the wall clock, so an
+  // extra firing would not play - it would only stretch the project and add
+  // dead frames to the export. They fire once.
+  const at = layer.kind === 'show' ? null : layer.at;
   if (!at || !at.length) return [layer.startMs];
-  const out = at.slice().sort((a, b) => a - b);
-  return out;
+  // Already sorted by normaliseProject and by every writer below, so this is
+  // returned as-is: it used to sort on every call, and layerEndMs reaches it
+  // through projectDuration -> msToX, which the timeline calls per firing per
+  // repaint. Sorting there cost 20x on a 1400-layer show.
+  return at;
 }
 
 /** How long one firing lasts. */
@@ -231,6 +237,32 @@ export function layerSpanMs(layer) {
 export function layerEndMs(layer) {
   const times = layerFireTimes(layer);
   return times[times.length - 1] + layerSpanMs(layer);
+}
+
+/**
+ * Move a layer to a new start, carrying its extra firings with it.
+ *
+ * `startMs` is only ever the first firing, so writing it alone left `at`
+ * behind: the clip moved, nothing on the playfield did, and reloading snapped
+ * the clip back because startMs is re-pinned from at[0] on load.
+ */
+export function setLayerStart(layer, ms) {
+  const next = Math.max(0, Math.round(ms));
+  if (layer.at && layer.at.length) {
+    const delta = next - layer.at[0];
+    layer.at = layer.at.map((t) => Math.max(0, t + delta));
+    layer.startMs = layer.at[0];
+    return;
+  }
+  layer.startMs = next;
+}
+
+/** Scale every firing along with the layer, for Fit to length. */
+export function scaleLayerTimes(layer, factor) {
+  if (layer.at && layer.at.length) {
+    layer.at = layer.at.map((t) => Math.max(0, Math.round(t * factor)));
+    layer.startMs = layer.at[0];
+  }
 }
 
 export function projectDuration(project) {
@@ -540,26 +572,39 @@ export function unanimateParam(layer, name) {
  * spectrum rather than flicking between a handful of colours.
  */
 export function varyState(st, vary, index) {
-  if (!vary || !st || !index) return st;
+  if (!vary || !st) return st;
+  // index 0 included: the lists are documented as cycling 1st,2nd,3rd,1st...
+  // across firings, and skipping the first firing made vary.x[0] first apply
+  // at firing three.
   const pick = (arr) => (Array.isArray(arr) && arr.length
     ? arr[index % arr.length] : undefined);
 
+  // Offsets, not replacements. Assigning would pin the value for the whole of
+  // that firing, so a layer that sweeps across the playfield stood still on
+  // every instance but the first - losing the animation that is the reason the
+  // layer exists. Scale multiplies, which is what "half size" means.
   const x = pick(vary.x);
-  if (x != null) st.x = x;
+  if (x != null) st.x += x;
   const y = pick(vary.y);
-  if (y != null) st.y = y;
-  const a = pick(vary.alpha);
-  if (a != null) st.alpha = a;
-  const sc = pick(vary.scale);
-  if (sc != null) { st.sx = sc; st.sy = sc; }
+  if (y != null) st.y += y;
   const rot = pick(vary.rot);
-  if (rot != null) st.rot = rot;
+  if (rot != null) st.rot += rot;
+  const a = pick(vary.alpha);
+  if (a != null) st.alpha = Math.max(0, Math.min(1, st.alpha * a));
+  const sc = pick(vary.scale);
+  if (sc != null) { st.sx *= sc; st.sy *= sc; }
 
-  if (vary.hue) {
-    const c = hexToRgb(st.color);
-    const h = rgbToHsl(c.r, c.g, c.b);
-    const n = hslToRgb(h.h + vary.hue * index, h.s, h.l);
-    st.color = rgbToHex(n.r, n.g, n.b);
+  if (vary.hue && index) {
+    const shift = (hex) => {
+      const c = hexToRgb(hex);
+      const h = rgbToHsl(c.r, c.g, c.b);
+      const n = hslToRgb(h.h + vary.hue * index, h.s, h.l);
+      return rgbToHex(n.r, n.g, n.b);
+    };
+    st.color = shift(st.color);
+    // gradients and two-colour fills would otherwise rotate only half their
+    // palette per firing
+    if (st.color2) st.color2 = shift(st.color2);
   }
   return st;
 }
@@ -581,8 +626,18 @@ export function layerInstancesAtTime(layer, timeMs) {
   const out = [];
   for (let i = 0; i < times.length; i++) {
     const local = timeMs - times[i];
-    if (local < -1 || local >= span) continue;
-    const st = stateAtLocal(layer, Math.max(0, local));
+    // `< -1` drew an instance a millisecond before its start time, so a firing
+    // landing just after a frame boundary appeared one frame early. Roughly 3%
+    // of times do at 30fps, which is why "identical to separate copies" held
+    // everywhere except those four sampled instants.
+    const first = i === 0;
+    const last = i === times.length - 1;
+    if (local < 0) {
+      if (!(first && layer.holdBefore)) continue;
+    } else if (local >= span) {
+      if (!(last && layer.holdAfter)) continue;
+    }
+    const st = stateAtLocal(layer, local, first, last);
     if (!st) continue;
     out.push({ state: varyState(st, layer.vary, i), index: i, startMs: times[i] });
   }
@@ -590,10 +645,18 @@ export function layerInstancesAtTime(layer, timeMs) {
 }
 
 /** The state `local` ms into one firing, ignoring where that firing sits. */
-export function stateAtLocal(layer, local) {
+export function stateAtLocal(layer, local, holdBefore, holdAfter) {
   const dur = Math.max(1, layer.durationMs);
   const reps = Math.max(1, layer.repeat || 1);
-  if (local < 0 || local >= dur * reps) return null;
+  // Holds belong to the ends of the whole run: before the first firing and
+  // after the last. Without them here, ticking "Visible before"/"Visible
+  // after" did nothing the moment a layer had a second firing.
+  if (local < 0) {
+    return holdBefore && layer.holdBefore ? stateAt(layer, 0) : null;
+  }
+  if (local >= dur * reps) {
+    return holdAfter && layer.holdAfter ? stateAt(layer, 1) : null;
+  }
   const cycle = Math.floor(local / dur);
   let u = (local - cycle * dur) / dur;
   if (layer.pingpong && cycle % 2 === 1) u = 1 - u;
@@ -1001,7 +1064,7 @@ export function normaliseProject(raw) {
     // instancing: only finite times, sorted, with startMs pinned to the first
     // so everything that reasons about clip placement keeps working
     layer.at = Array.isArray(l.at)
-      ? l.at.filter((v) => Number.isFinite(v)).sort((a, b) => a - b)
+      ? l.at.filter((v) => Number.isFinite(v) && v >= 0).sort((a, b) => a - b)
       : [];
     if (layer.at.length) layer.startMs = layer.at[0];
     layer.vary = l.vary && typeof l.vary === 'object' ? Object.assign({}, l.vary) : null;

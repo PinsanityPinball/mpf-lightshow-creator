@@ -173,7 +173,9 @@ file holds 291 copies of a single gesture among 5,033 layers, which is how a
 **Vary each firing** stops a train looking mechanical. *Hue shift* is cumulative
 degrees per firing, so a long run drifts through the spectrum. Position and size
 take short lists that cycle by firing number, so three values cover any number of
-firings.
+firings — and they are **offsets**, so each firing keeps the layer's own
+animation and is simply nudged from it. Shape layers only: a pattern drives its
+lights from its own settings and never reads the state that varying changes.
 
 A layer with no extra times behaves exactly as before, so existing shows are
 unaffected.

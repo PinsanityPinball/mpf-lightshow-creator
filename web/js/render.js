@@ -13,7 +13,7 @@ import {
   layerStateAtTime, resolveShow, showFrameAt, mapShowToLights,
   orderedTargets, patternTimeAt, patternTimesAt, targetBounds, mulberry32, hashString,
   effectiveParams, hexToRgb, rgbToHex,
-  layerInstancesAtTime,
+  layerInstancesAtTime, stateAtLocal,
 } from './project.js';
 
 const D2R = Math.PI / 180;
@@ -295,9 +295,12 @@ export class ShowRenderer {
         const fires = patternTimesAt(layer, timeMs);
         if (!fires.length) continue;
         if (mutates) this.resolveAverage(lights.length);
-        const st = layerStateAtTime(layer, timeMs);
         let ran = false;
         for (const f of fires) {
+          // One state per firing. Sharing the first firing's state meant every
+          // later firing fell back to full brightness, turning a fade in/out
+          // into a hard on/off flash.
+          const st = stateAtLocal(layer, f.t, true, true);
           if (this.accumulatePattern(layer, lights, timeMs, st, toLin, f.t)) ran = true;
         }
         if (ran) patternLayers++;
