@@ -1216,6 +1216,14 @@ class Handler(SimpleHTTPRequestHandler):
             if not SAFE_NAME.match(name):
                 return self.send_error_json(400, "unsafe name: %r" % name)
             content = body.get("content", "")
+            # Belt and braces alongside the client-side check: a show with no
+            # steps aborts MPF's start-up when it finds it in a machine folder,
+            # so it must not be possible to land one there at all.
+            if not content.strip():
+                return self.send_error_json(400, "refusing to write an empty show")
+            if "\n- " not in content:
+                return self.send_error_json(
+                    400, "that show has no steps - MPF cannot load it")
             target = body.get("target", "exports")
 
             if target == "machine":
