@@ -116,10 +116,20 @@ export class Inspector {
     const edit = (label, fn) => { app.pushUndo(label); fn(); app.onProjectEdit({}); };
 
     // ---- always-visible header: which layer, and is it on
-    const name = el('input', { type: 'text', value: layer.name });
-    name.addEventListener('change', () => edit('rename', () => {
-      layer.name = name.value; app.rebuildHeads();
-    }));
+    const name = el('input', {
+      type: 'text', value: layer.name, placeholder: 'Layer name',
+      title: 'What this layer is called, in the timeline and the layer list',
+    });
+    // commit on blur/Enter and also as you type, so a name is never lost by
+    // clicking straight into another control
+    const rename = () => {
+      if (name.value === layer.name) return;
+      app.pushUndo('rename', `${layer.id}:name`);
+      layer.name = name.value;
+      app.rebuildHeads();
+    };
+    name.addEventListener('input', rename);
+    name.addEventListener('change', rename);
     root.appendChild(el('div', { class: 'layer-head' }, [
       name,
       checkbox('On', layer.enabled, (v) => edit('enable', () => {

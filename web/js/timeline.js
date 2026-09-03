@@ -6,7 +6,10 @@ import { projectDuration, layerEndMs, invalidateKeys, makeKey, stateAt } from '.
 const ROW_H = 30;
 const RULER_H = 26;
 const PAD_L = 8;
-const EDGE = 6;
+// Grab width for the clip's start/end handles. The first and last keyframes
+// sit exactly on those edges, so this band is tested before keyframes are -
+// otherwise the key always wins and the clip can never be resized.
+const EDGE = 8;
 
 export class Timeline {
   constructor(app, canvas, headsEl) {
@@ -96,7 +99,14 @@ export class Timeline {
     app.selectLayer(layer.id);
     const rowTop = this.rowY(row);
 
-    const ki = this.keyAt(layer, rowTop, x, y);
+    const x0 = this.msToX(layer.startMs);
+    const x1 = this.msToX(layerEndMs(layer));
+    const onEdge = Math.abs(x - x0) <= EDGE || Math.abs(x - x1) <= EDGE;
+
+    // Keyframes come first everywhere except the two edges. The end keys live
+    // exactly on them, and resizing the clip is by far the more common thing to
+    // want there - the end keys can still be moved from the Keyframe tab.
+    const ki = onEdge ? -1 : this.keyAt(layer, rowTop, x, y);
     if (ki >= 0) {
       app.selectKey(ki);
       app.pushUndo('move keyframe');
@@ -106,13 +116,14 @@ export class Timeline {
       return;
     }
 
-    const x0 = this.msToX(layer.startMs);
-    const x1 = this.msToX(layerEndMs(layer));
     if (x >= x0 - EDGE && x <= x1 + EDGE) {
       app.pushUndo('move clip');
       let mode = 'clip';
       if (Math.abs(x - x0) <= EDGE) mode = 'clipL';
       else if (Math.abs(x - x1) <= EDGE) mode = 'clipR';
+      // keep the panel pointing at the end being dragged
+      if (mode === 'clipL') app.selectKey(0);
+      else if (mode === 'clipR') app.selectKey(layer.keys.length - 1);
       this.drag = {
         mode, layer,
         grabMs: this.xToMs(x) - layer.startMs,
@@ -139,13 +150,11 @@ export class Timeline {
       if (row >= 0) {
         const layer = app.project.layers[row];
         const rowTop = this.rowY(row);
-        if (this.keyAt(layer, rowTop, x, y) >= 0) cursor = 'grab';
-        else {
-          const x0 = this.msToX(layer.startMs);
-          const x1 = this.msToX(layerEndMs(layer));
-          if (Math.abs(x - x0) <= EDGE || Math.abs(x - x1) <= EDGE) cursor = 'ew-resize';
-          else if (x > x0 && x < x1) cursor = 'move';
-        }
+        const x0 = this.msToX(layer.startMs);
+        const x1 = this.msToX(layerEndMs(layer));
+        if (Math.abs(x - x0) <= EDGE || Math.abs(x - x1) <= EDGE) cursor = 'ew-resize';
+        else if (this.keyAt(layer, rowTop, x, y) >= 0) cursor = 'grab';
+        else if (x > x0 && x < x1) cursor = 'move';
       }
       this.canvas.style.cursor = cursor;
       return;
@@ -398,6 +407,14 @@ export class Timeline {
       ctx.clip();
       ctx.fillText(layer.name, x0 + 7, y + ROW_H / 2);
       ctx.restore();
+    }
+    // Resize grips. The end keyframes sit on these edges, so without a visible
+    // handle there is nothing to say the clip can be dragged shorter or longer.
+    if (selected && bw > 16) {
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      for (const gx of [x0 + 2.5, x1 - 4.5]) {
+        ctx.fillRect(gx, by + 3, 2, bh - 6);
+      }
     }
     ctx.restore();
 

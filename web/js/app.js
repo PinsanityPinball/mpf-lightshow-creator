@@ -57,7 +57,9 @@ class App {
     this.onion = false;
     this.showPath = true;
     this.lightSize = 1;
-    this.autoKey = true;
+    // Off by default: with it on, nudging anything silently rewrote the
+    // keyframe under the playhead, which is surprising until you know it.
+    this.autoKey = false;
 
     this.selectedLayerId = null;
     this.selectedKeyIndex = 0;
@@ -421,7 +423,24 @@ class App {
     this.requestDraw();
   }
 
+  /**
+   * Point at + Key when it is the thing to press. With auto-key off, edits go
+   * to the selected keyframe rather than creating one, so a layer selected with
+   * no obvious next step is exactly when people get stuck.
+   */
+  updateKeyHint() {
+    const btn = document.getElementById('btnAddKey');
+    if (!btn) return;
+    const want = !this.autoKey && !!this.selectedLayer();
+    btn.classList.toggle('attention', want);
+    btn.title = want
+      ? 'Add a keyframe at the playhead (K). Auto-key is off, so changes edit '
+        + 'the selected keyframe until you add another.'
+      : 'Add a keyframe at the playhead (K)';
+  }
+
   rebuildHeads() {
+    this.updateKeyHint();
     const empty = $('#emptyState');
     if (empty) empty.classList.toggle('hidden', this.project.layers.length > 0);
     const heads = clear($('#heads'));
@@ -443,12 +462,40 @@ class App {
           this.inspector.refresh();
         },
       });
+      // Double-click the name to rename in place. The Layer panel has a name
+      // box too, but the track head is where you are looking when you decide a
+      // layer needs a better name than "Sparkle 3".
+      const nm = el('span', { class: 'nm', text: layer.name });
+      nm.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        nm.contentEditable = 'true';
+        nm.focus();
+        document.execCommand('selectAll', false, null);
+      });
+      const commit = () => {
+        if (nm.contentEditable !== 'true') return;
+        nm.contentEditable = 'false';
+        const next = nm.textContent.trim();
+        if (next && next !== layer.name) {
+          this.pushUndo('rename layer');
+          layer.name = next;
+          this.inspector.refresh();
+        }
+        this.rebuildHeads();
+      };
+      nm.addEventListener('blur', commit);
+      nm.addEventListener('keydown', (e) => {
+        e.stopPropagation();               // not a timeline shortcut while typing
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { nm.textContent = layer.name; commit(); }
+      });
+
       const row = el('div', {
         class: 'head' + (layer.id === this.selectedLayerId ? ' sel' : ''),
         draggable: 'true',
-        title: layer.name,
+        title: layer.name + '  (double-click the name to rename)',
         onclick: () => this.selectLayer(layer.id),
-      }, [eye, swatch, el('span', { class: 'nm', text: layer.name })]);
+      }, [eye, swatch, nm]);
 
       row.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData('text/plain', String(i));
@@ -1351,7 +1398,10 @@ class App {
     };
     $('#selSpeed').onchange = (e) => { this.speed = Number(e.target.value); };
     $('#rngZoom').oninput = (e) => this.setZoom(Number(e.target.value));
-    $('#tglAutoKey').onchange = (e) => { this.autoKey = e.target.checked; };
+    $('#tglAutoKey').onchange = (e) => {
+      this.autoKey = e.target.checked;
+      this.updateKeyHint();
+    };
 
     $('#btnAddKey').onclick = () => this.addKeyAtPlayhead();
     $('#btnDelKey').onclick = () => this.deleteSelectedKey();

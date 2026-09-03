@@ -110,6 +110,30 @@ show contains.
 
 ---
 
+## Naming layers
+
+Type a name in the box at the top of the **Layer** panel, or double-click a
+layer's name in the timeline track head to rename it in place (Enter commits,
+Escape cancels). Both are undoable, and the name is what shows on the clip.
+
+## Resizing a clip
+
+Drag either end of a clip in the timeline. The first and last keyframes sit
+exactly on those edges, so the edges take priority over them in an 8px band —
+otherwise the keyframe always won and the clip could not be resized at all.
+Keyframes anywhere else in the clip still drag normally, and the end keyframes
+can still be retimed from the **Keyframe** tab. When a layer is selected, both
+ends show a grip so it is clear the clip can be dragged.
+
+## Auto-key
+
+**Auto-key is off by default.** With it on, moving or adjusting anything
+silently rewrites the keyframe under the playhead, which is surprising until
+you know it is happening. With it off, edits go to the selected keyframe and
+you add new ones deliberately with **+ Key** (or `K`) — which highlights itself
+whenever a layer is selected and auto-key is off, since that is exactly the
+moment people get stuck.
+
 ## The Layer panel
 
 The right-hand **Layer** panel is split into sub-tabs, so you are only ever
@@ -279,12 +303,13 @@ The preset dialog lists four groups, in this order:
 | Group | What is in it |
 |---|---|
 | **Patterns** | Chase, Chase up, Marquee, Sparkle, Wave, Stack up |
-| **Solid & blink** | Solid on, Blink 0.5s, Blink fast, Pulse, Colour fade |
 | **Wipes** | Sweep up, Sweep down, Wipe right, Diagonal wipe |
 | **Radial** | Rings, Radar sweep, Spinning bar, Rainbow spin, Starburst, Spiral |
+| **Solid & blink** | Solid on, Blink 0.5s, Blink fast, Pulse, Colour fade |
 
 Patterns come first because they drive the lights directly, which reads far
-better on a sparse playfield than a shape sampled through it.
+better on a sparse playfield than a shape sampled through it. Solid and blink
+sit at the bottom: useful, but the least interesting thing to reach for.
 
 The old *Motion* group (Dot chase, Comet, Zig-zag drop, Chevron march) is gone,
 along with a few near-duplicates: *Strobe* was Blink fast with extra steps,

@@ -711,3 +711,27 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
 /* An explicit `display` on a class beats the browser's own [hidden] rule, so
    el.hidden silently did nothing on flex/grid children. This restores it. */
 [hidden] { display: none !important; }
+
+/* ---- + Key attention ---------------------------------------------------- */
+/* With auto-key off, this is the button people need next and do not find. */
+#btnAddKey.attention {
+  border-color: var(--accent);
+  color: #cdefff;
+  background: #16303c;
+  animation: keyPulse 2.4s ease-in-out 3;
+}
+@keyframes keyPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0); }
+  50%      { box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.22); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #btnAddKey.attention { animation: none; }
+}
+
+/* renaming a layer straight from its track head */
+.head .nm[contenteditable="true"] {
+  outline: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 3px;
+  cursor: text;
+}

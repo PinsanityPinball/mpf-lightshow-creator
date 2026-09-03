@@ -11,7 +11,7 @@ const S = (id, over) => Object.assign(shapeDefaults(id), over || {});
  * light the lights directly - they are the ones that read well on a sparse
  * playfield - and the shape-based groups follow.
  */
-export const GROUP_ORDER = ['Patterns', 'Solid & blink', 'Wipes', 'Radial'];
+export const GROUP_ORDER = ['Patterns', 'Wipes', 'Radial', 'Solid & blink'];
 
 export const PRESETS = [
   {
