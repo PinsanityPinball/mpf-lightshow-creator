@@ -85,12 +85,20 @@ class App {
     this.wireKeys();
 
     try {
-      const [maps, tagfiles, shapes, config] = await Promise.all([
+      const [maps, tagfiles, shapes, config, hello] = await Promise.all([
         api('/api/lightmaps'),
         api('/api/tagfiles'),
         api('/api/shapes'),
         api('/api/config'),
+        api('/api/hello').catch(() => null),
       ]);
+      // A server started before server.py was last edited is running the old
+      // code, which shows up as endpoints that "do not exist". Say so plainly
+      // rather than letting a feature look broken.
+      if (hello && hello.stale) {
+        status('This server is running an older server.py than the one on disk. '
+          + 'Close the window and run run.bat again to pick up the changes.', 'err');
+      }
       this.shapeFiles = shapes.shapes || [];
       this.config = config || {};
       this.tagFiles = tagfiles.tagfiles || [];
@@ -136,9 +144,31 @@ class App {
     // Notice edits made to the light map outside the app.
     window.addEventListener('focus', () => this.checkMapFreshness());
     setInterval(() => this.checkMapFreshness(), 10000);
+    this.wireLiveness();
 
     this.lastTick = performance.now();
     requestAnimationFrame((t) => this.tick(t));
+  }
+
+  /**
+   * Tell the server this window is still here, and that it is going.
+   *
+   * server.py exits once the beats stop, so closing the window closes the
+   * server instead of leaving a process behind. Those leftovers were not just
+   * untidy: a server started before a code change keeps answering with the
+   * routes it had then, which surfaces as "no such endpoint" for anything
+   * added since.
+   */
+  wireLiveness() {
+    const beat = () => { fetch('/api/ping').catch(() => {}); };
+    setInterval(beat, 5000);
+    // pagehide covers closing, navigating away and the bfcache; a reload fires
+    // it too, which is why the server only shortens its fuse rather than
+    // exiting - the reloaded page beats again well inside the grace period.
+    window.addEventListener('pagehide', () => {
+      if (navigator.sendBeacon) navigator.sendBeacon('/api/bye');
+      else fetch('/api/bye', { keepalive: true }).catch(() => {});
+    });
   }
 
   resizeAll() {
@@ -405,6 +435,7 @@ class App {
     const layer = this.selectedLayer();
     if (!layer) return;
     this.pushUndo('delete layer');
+    const gone = layer.name;
     const i = this.project.layers.indexOf(layer);
     this.project.layers.splice(i, 1);
     const next = this.project.layers[Math.min(i, this.project.layers.length - 1)];
@@ -412,6 +443,7 @@ class App {
     this.rebuildHeads();
     this.inspector.refresh();
     this.requestDraw();
+    status(`Deleted "${gone}" - Ctrl+Z puts it back`, 'ok');
   }
 
   moveLayer(from, to) {
@@ -1108,12 +1140,13 @@ class App {
     ]);
 
     const body = el('div', { class: 'add-cards' }, [
+      card('Start from a preset',
+        'Patterns, wipes, spins and blinks you can drop in and adjust. '
+        + 'The quickest way to something that looks good.',
+        () => this.presetDialog(), true),
       card('Build it step by step',
         'Seven quick steps with a live preview. Best if you are not sure what you want yet.',
-        () => this.openWizard(), true),
-      card('Start from a preset',
-        'Sweeps, spins, chases, blinks and sparkles you can drop in and adjust.',
-        () => this.presetDialog()),
+        () => this.openWizard()),
       card('Import an MPF show',
         'Bring in a show you already have and stack it with new layers.',
         () => this.importShowDialog()),
@@ -1483,7 +1516,14 @@ class App {
         case 'ArrowUp': e.preventDefault(); this.cycleLayer(-1); break;
         case 'ArrowDown': e.preventDefault(); this.cycleLayer(1); break;
         case 'k': case 'K': this.addKeyAtPlayhead(); break;
-        case 'Delete': case 'Backspace': this.deleteSelectedKey(); break;
+        // Delete removes the layer, Backspace the keyframe. Both used to mean
+        // "keyframe", which left no key for the more common of the two.
+        case 'Delete':
+          this.deleteLayer();
+          break;
+        case 'Backspace':
+          this.deleteSelectedKey();
+          break;
         case '1': this.setView('both'); break;
         case '2': this.setView('shapes'); break;
         case '3': this.setView('lights'); break;
@@ -1560,6 +1600,40 @@ function patternThumb(pattern) {
     }
     g.globalAlpha = 0.5;
     g.fillRect(11, 6, 5, 4);
+  } else if (t === 'fire') {
+    // ragged flames rising from the base
+    for (let x = 3; x < 31; x += 4) {
+      const h = 10 + ((x * 7) % 11);
+      g.globalAlpha = 0.45 + ((x * 13) % 5) / 10;
+      g.fillRect(x, 30 - h, 3, h);
+    }
+  } else if (t === 'pinwheel') {
+    g.globalAlpha = 1;
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      g.beginPath(); g.moveTo(17, 17);
+      g.arc(17, 17, 13, a, a + 0.7); g.closePath(); g.fill();
+    }
+  } else if (t === 'scanner') {
+    for (let i = 0; i < 6; i++) {
+      g.globalAlpha = i === 0 ? 1 : 0.5 - i * 0.08;
+      g.fillRect(20 - i * 3.4, 8, 3, 18);
+    }
+  } else if (t === 'rain') {
+    [[8, 4], [17, 12], [26, 2]].forEach(([x, y], i) => {
+      g.globalAlpha = 1;
+      g.fillRect(x, y + 8, 2, 4);
+      g.globalAlpha = 0.35;
+      g.fillRect(x, y, 2, 8);
+    });
+  } else if (t === 'plasma') {
+    for (let x = 0; x < 34; x += 2) {
+      for (let y = 0; y < 34; y += 2) {
+        const v = Math.sin(x / 5) + Math.sin(y / 6) + Math.sin((x + y) / 8);
+        g.globalAlpha = 0.15 + ((v / 3 + 1) / 2) * 0.85;
+        g.fillRect(x, y, 2, 2);
+      }
+    }
   } else if (t === 'sparkle') {
     const pts = [[8, 9], [22, 7], [15, 17], [26, 20], [7, 24], [19, 27]];
     pts.forEach(([x, y], i) => {

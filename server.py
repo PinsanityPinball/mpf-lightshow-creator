@@ -30,11 +30,25 @@ import posixpath
 import re
 import sys
 import threading
+import time
 import webbrowser
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+STARTED_AT = time.time()
+
+# The page beats every few seconds. When the beats stop the window is gone and
+# there is nothing left for the server to serve, so it exits rather than piling
+# up orphaned processes - which also go stale, still answering requests with
+# whatever routes existed when they started.
+CLIENT = {
+    "last": 0.0,      # time of the most recent beat
+    "seen": False,    # a page has connected at least once
+    "deadline": 0.0,  # set by /api/bye so a closed window exits sooner
+}
+IDLE_TIMEOUT = 25.0   # no beats for this long -> quit
+BYE_GRACE = 6.0       # after a page says it is going -> quit unless one returns
 
 DIRS = {
     "web": "web",
@@ -865,11 +879,36 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_api_get(self, route, query):
         if route == "/api/hello":
+            CLIENT["last"] = time.time()
+            CLIENT["seen"] = True
+            CLIENT["deadline"] = 0.0
+            # server.py is read once at startup, so a file newer than the
+            # process is code this server is not running. Saying so beats the
+            # confusing "no such endpoint" you get from a route added since.
+            try:
+                src = os.path.getmtime(os.path.abspath(__file__))
+            except OSError:
+                src = 0
             return self.send_json({
                 "ok": True,
                 "root": ROOT,
                 "dirs": dict((k, os.path.join(ROOT, v)) for k, v in DIRS.items()),
+                "startedAt": int(STARTED_AT * 1000),
+                "sourceMtime": int(src * 1000),
+                "stale": bool(src and src > STARTED_AT + 1),
             })
+
+        if route == "/api/ping":
+            CLIENT["last"] = time.time()
+            CLIENT["seen"] = True
+            CLIENT["deadline"] = 0.0
+            return self.send_json({"ok": True})
+
+        if route == "/api/bye":
+            # A reload fires this too, so do not exit here - just shorten the
+            # fuse. A page coming back beats again well inside the grace period.
+            CLIENT["deadline"] = time.time() + BYE_GRACE
+            return self.send_json({"ok": True})
 
         if route == "/api/config":
             info = dict(CONFIG)
@@ -1199,6 +1238,28 @@ class Handler(SimpleHTTPRequestHandler):
         return self.send_error_json(404, "no such endpoint: %s" % route)
 
 
+def watch_client(httpd, keep_alive):
+    """Shut the server down once the page that was using it has gone."""
+    if keep_alive:
+        return
+    while True:
+        time.sleep(2.0)
+        now = time.time()
+        if not CLIENT["seen"]:
+            # nobody has ever connected; wait rather than quitting on startup
+            if now - STARTED_AT > 90:
+                print("\nno page connected; exiting")
+                break
+            continue
+        if CLIENT["deadline"] and now > CLIENT["deadline"]:
+            print("\nwindow closed; exiting")
+            break
+        if now - CLIENT["last"] > IDLE_TIMEOUT:
+            print("\nwindow gone; exiting")
+            break
+    threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+
 def main():
     global ROOT
     ap = argparse.ArgumentParser(description="Pinlandia Show Creator")
@@ -1206,6 +1267,8 @@ def main():
     ap.add_argument("--root", default=HERE, help="folder holding web/ shapes/ lightmaps/ ...")
     ap.add_argument("--machine", default=None, help="MPF machine folder to export into")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--keep-alive", action="store_true",
+                    help="stay running after the browser window closes")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -1238,9 +1301,10 @@ def main():
         except ValueError as exc:
             print("  machine INVALID: %s" % exc)
     print("  open    %s" % url)
-    print("  stop    Ctrl-C")
+    print("  stop    Ctrl-C%s" % ("" if args.keep_alive else ", or just close the window"))
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    threading.Thread(target=watch_client, args=(httpd, args.keep_alive), daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

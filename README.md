@@ -125,6 +125,19 @@ Keyframes anywhere else in the clip still drag normally, and the end keyframes
 can still be retimed from the **Keyframe** tab. When a layer is selected, both
 ends show a grip so it is clear the clip can be dragged.
 
+## Closing the window closes the server
+
+`server.py` exits a few seconds after the browser window goes away — the page
+beats every five seconds and the server quits when the beats stop. A reload
+fires the same "going away" signal, so the server only shortens its fuse rather
+than exiting; the reloaded page beats again well inside the grace period.
+
+This is not only tidiness. A leftover server keeps answering with the routes it
+had **when it started**, so a feature added since looks broken with a confusing
+`no such endpoint`. If a server does end up older than `server.py` on disk, the
+app now says so on startup and tells you to restart. Run with `--keep-alive` to
+opt out and leave the server running.
+
 ## Auto-key
 
 **Auto-key is off by default.** With it on, moving or adjusting anything
@@ -238,7 +251,30 @@ Start from a preset → Patterns**:
   falling** each cell travels in from the edge to its resting place rather than
   appearing there, so you watch it land, Tetris-style. Set it to *wipe* to light
   only the leading cell instead.
+- **Fire** — per-light flicker on a warm ramp, hottest at the base of the group
+  and cooling towards the top. No geometry at all: the character comes from
+  noise, which is what makes it read unlike everything else here. Seeded, so the
+  same show burns the same way every time.
+- **Pinwheel** — arms rotating about the centre, worked out from each light's
+  angle, so they stay even however the lights are scattered.
+- **Scanner** — the Knight Rider band, sweeping back and forth along an axis
+  with a trail. Positional, so it sweeps the real playfield rather than a light
+  index. Turn off *Bounce back* and it wraps round instead of returning.
+- **Rain** — drops falling down the playfield, each with a trail. Every drop
+  keeps its column and its place in the cycle, picked from the seed, so the same
+  show always rains the same way.
+- **Plasma** — three overlapping sine fields across the light positions, washing
+  between two colours. Every light gets its own colour and brightness.
 - **Solid** — one colour, which the keyframe brightness can still fade.
+
+**Fit to layer length** is on by default for every timed pattern. A pattern's
+own timing has nothing to do with how long its layer runs, so stretching a clip
+used to leave the pattern finishing early and holding — a stack would reach the
+top and just sit there — or being cut off mid-cycle and jumping on the repeat.
+With Fit on, one cycle spans the clip: a complete fill for Stack, one pass along
+the lights for Chase, a whole number of passes for Wave, sweeps for Scanner, and
+so on. Resize the clip and the pattern stretches with it. Turn it off to run the
+exact millisecond timings you typed instead.
 
 **Sparkle is random but repeatable.** It runs off a seeded generator keyed to
 the step number, so the same show always produces the same sparkle — the
@@ -302,14 +338,17 @@ The preset dialog lists four groups, in this order:
 
 | Group | What is in it |
 |---|---|
-| **Patterns** | Chase, Chase up, Marquee, Sparkle, Wave, Stack up |
+| **Patterns** | Chase, Chase up, Marquee, Fire, Pinwheel, Scanner, Rain, Plasma, Sparkle, Wave, Stack up |
 | **Wipes** | Sweep up, Sweep down, Wipe right, Diagonal wipe |
 | **Radial** | Rings, Radar sweep, Spinning bar, Rainbow spin, Starburst, Spiral |
-| **Solid & blink** | Solid on, Blink 0.5s, Blink fast, Pulse, Colour fade |
+| **Flashes** | Pulse (whole field), Colour fade (whole field) |
 
 Patterns come first because they drive the lights directly, which reads far
-better on a sparse playfield than a shape sampled through it. Solid and blink
-sit at the bottom: useful, but the least interesting thing to reach for.
+better on a sparse playfield than a shape sampled through it.
+
+There are no presets for a plain blink or a solid colour. Both are still there
+as pattern *types* — pick them from **Type** on a pattern layer — but a preset
+for "turn these lights on" was not saving anyone anything.
 
 The old *Motion* group (Dot chase, Comet, Zig-zag drop, Chevron march) is gone,
 along with a few near-duplicates: *Strobe* was Blink fast with extra steps,

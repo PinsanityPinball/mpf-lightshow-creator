@@ -504,7 +504,12 @@ export function layerStateAtTime(layer, timeMs) {
  */
 export function makePattern(over = {}) {
   return Object.assign({
-    type: 'blink',        // blink | chase | sparkle | wavy | stack | marquee | solid
+    type: 'blink',        // blink | chase | sparkle | wavy | stack | marquee
+                          // | fire | pinwheel | scanner | rain | plasma | solid
+    // One cycle of the pattern spans the clip. Without it a pattern's own
+    // timing is unrelated to the layer's length, so stretching a clip left the
+    // pattern finishing early and sitting still for the rest.
+    fit: true,
     color: '#ff2020',
     onMs: 500,
     offMs: 500,
@@ -535,6 +540,25 @@ export function makePattern(over = {}) {
     // marquee
     every: 3,             // one light in every N is lit
     marqueeMs: 140,       // time before the lit set shifts along
+    // fire
+    fireMs: 90,           // how often the flicker is re-rolled
+    fireHeat: 0.8,        // overall brightness before the flicker is added
+    fireJitter: 0.45,     // how much the flicker moves it
+    // pinwheel
+    arms: 3,
+    spinMs: 2000,
+    armWidth: 0.35,       // fraction of the gap between arms that is lit
+    // scanner
+    sweepMs: 1400,
+    bandWidth: 0.22,
+    bounce: true,         // sweep back and forth rather than wrapping round
+    // rain
+    drops: 6,
+    dropMs: 1400,
+    tailLen: 0.25,
+    // plasma
+    plasmaScale: 2.2,
+    plasmaMs: 3000,
     // stack
     cols: 4,
     rows: 6,

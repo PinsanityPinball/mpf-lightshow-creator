@@ -655,8 +655,38 @@ export class Inspector {
       ['wavy', 'Wave across the lights'],
       ['stack', 'Stack / fill a grid'],
       ['marquee', 'Marquee (every Nth light)'],
+      ['fire', 'Fire (flicker, hot at the base)'],
+      ['pinwheel', 'Pinwheel (arms spinning)'],
+      ['scanner', 'Scanner (band sweeping back and forth)'],
+      ['rain', 'Rain (drops falling)'],
+      ['plasma', 'Plasma (soft moving wash)'],
       ['solid', 'Solid colour'],
     ], (v) => edit('pattern type', () => { p.type = v; this.buildLayer(); }))));
+    const FIT_MEANS = {
+      stack: 'one complete fill spanning the clip',
+      chase: 'exactly one pass along the lights',
+      marquee: 'a whole number of complete cycles',
+      wavy: 'a whole number of passes',
+      fire: 'a whole number of flicker cycles',
+      pinwheel: 'a whole number of turns',
+      scanner: 'a whole number of sweeps',
+      rain: 'a whole number of falls',
+      plasma: 'a whole number of cycles',
+    };
+    if (FIT_MEANS[p.type]) {
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Fit to layer length', p.fit !== false, (v) => edit('fit to layer', () => {
+          p.fit = v;
+          this.buildLayer();
+        })),
+      ]));
+      root.appendChild(hint(p.fit !== false
+        ? `Timed to the clip: ${FIT_MEANS[p.type]} over its ${layer.durationMs} ms. `
+          + 'Resize the clip and the pattern stretches with it.'
+        : 'Running on its own timing, which is unrelated to the clip length - it can '
+          + 'finish early and hold, or be cut off mid-cycle.'));
+    }
+
     if (p.type !== 'sparkle') {
       root.appendChild(field('Colour', colorInput(p.color,
         this.live(`${layer.id}:pcolor`, 'colour', (v) => { p.color = v; app.rebuildHeads(); }))));
@@ -773,6 +803,12 @@ export class Inspector {
         ['name', 'Light name'], ['x', 'Left to right'], ['y', 'Bottom to top'],
         ['angle', 'Around the centre'],
       ], (v) => edit('marquee order', () => { p.order = v; this.buildLayer(); }))));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Reverse direction', !!p.reverse, (v) => edit('marquee direction', () => {
+          p.reverse = v;
+          this.buildLayer();
+        })),
+      ]));
       root.appendChild(field('When off', selectBox(p.offMode, [
         ['dark', 'Dark'], ['colour', 'Another colour'],
       ], (v) => edit('off mode', () => { p.offMode = v; this.buildLayer(); }))));
@@ -783,6 +819,104 @@ export class Inspector {
       root.appendChild(hint('A theatre sign: every Nth light is lit and the lit set steps '
         + 'along one place at a time. It reads as movement without a moving shape, and it '
         + 'suits a ring or a row of lights better than a scattered group.'));
+    }
+
+    if (p.type === 'fire') {
+      root.appendChild(field('Cool colour', colorInput(p.color2,
+        this.live(`${layer.id}:pfc2`, 'cool colour', (v) => { p.color2 = v; }))));
+      root.appendChild(slider('Heat', p.fireHeat, { min: 0, max: 1, step: 0.02 },
+        this.live(`${layer.id}:pfh`, 'heat', (v) => { p.fireHeat = v; })));
+      root.appendChild(slider('Flicker', p.fireJitter, { min: 0, max: 1, step: 0.02 },
+        this.live(`${layer.id}:pfj`, 'flicker', (v) => { p.fireJitter = v; })));
+      root.appendChild(field('Re-roll (ms)', numberInput(p.fireMs, 20, 2000, 10,
+        (v) => edit('flicker rate', () => {
+          p.fireMs = Math.max(20, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(field('Seed', numberInput(p.seed, 1, 9999, 1,
+        (v) => edit('seed', () => { p.seed = Math.round(v); this.buildLayer(); }))));
+      root.appendChild(hint('Hottest at the bottom of the group, cooling towards the top, '
+        + 'with every light flickering on its own. Seeded, so the same show burns the '
+        + 'same way every time.'));
+    }
+
+    if (p.type === 'pinwheel') {
+      root.appendChild(slider('Arms', p.arms, { min: 1, max: 8, step: 1 },
+        this.live(`${layer.id}:parms`, 'arms', (v) => { p.arms = Math.round(v); })));
+      root.appendChild(field('Turn time (ms)', numberInput(p.spinMs, 100, 60000, 50,
+        (v) => edit('spin time', () => {
+          p.spinMs = Math.max(100, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(slider('Arm width', p.armWidth, { min: 0.05, max: 1, step: 0.01 },
+        this.live(`${layer.id}:paw`, 'arm width', (v) => { p.armWidth = v; })));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Spin the other way', !!p.reverse, (v) => edit('spin direction', () => {
+          p.reverse = v;
+          this.buildLayer();
+        })),
+      ]));
+      root.appendChild(hint('Works off the angle of each light around the centre, so the '
+        + 'arms stay even however the lights are scattered.'));
+    }
+
+    if (p.type === 'scanner') {
+      root.appendChild(field('Sweeps', selectBox(p.axis === 'x' ? 'x' : 'y', [
+        ['y', 'Up and down'], ['x', 'Left and right'],
+      ], (v) => edit('scanner axis', () => { p.axis = v; this.buildLayer(); }))));
+      root.appendChild(field('Sweep time (ms)', numberInput(p.sweepMs, 100, 60000, 50,
+        (v) => edit('sweep time', () => {
+          p.sweepMs = Math.max(100, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(slider('Band width', p.bandWidth, { min: 0.03, max: 0.6, step: 0.01 },
+        this.live(`${layer.id}:pbw`, 'band width', (v) => { p.bandWidth = v; })));
+      root.appendChild(slider('Trail', p.tailLen, { min: 0, max: 0.8, step: 0.02 },
+        this.live(`${layer.id}:ptail`, 'trail', (v) => { p.tailLen = v; })));
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Bounce back', p.bounce !== false, (v) => edit('bounce', () => {
+          p.bounce = v;
+          this.buildLayer();
+        })),
+        checkbox('Start the other way', !!p.reverse, (v) => edit('scan direction', () => {
+          p.reverse = v;
+          this.buildLayer();
+        })),
+      ]));
+      root.appendChild(hint('Without Bounce back the band wraps round and starts again '
+        + 'from the same edge instead of returning.'));
+    }
+
+    if (p.type === 'rain') {
+      root.appendChild(slider('Drops', p.drops, { min: 1, max: 24, step: 1 },
+        this.live(`${layer.id}:pdrops`, 'drops', (v) => { p.drops = Math.round(v); })));
+      root.appendChild(field('Fall time (ms)', numberInput(p.dropMs, 100, 60000, 50,
+        (v) => edit('fall time', () => {
+          p.dropMs = Math.max(100, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(slider('Trail length', p.tailLen, { min: 0.02, max: 0.8, step: 0.02 },
+        this.live(`${layer.id}:prtail`, 'trail', (v) => { p.tailLen = v; })));
+      root.appendChild(field('Seed', numberInput(p.seed, 1, 9999, 1,
+        (v) => edit('seed', () => { p.seed = Math.round(v); this.buildLayer(); }))));
+      root.appendChild(hint('Each drop keeps its column and its place in the cycle, picked '
+        + 'from the seed, so the same show always rains the same way. Change the seed for '
+        + 'a different arrangement.'));
+    }
+
+    if (p.type === 'plasma') {
+      root.appendChild(field('Second colour', colorInput(p.color2,
+        this.live(`${layer.id}:ppc2`, 'colour', (v) => { p.color2 = v; }))));
+      root.appendChild(slider('Detail', p.plasmaScale, { min: 0.5, max: 6, step: 0.1 },
+        this.live(`${layer.id}:pps`, 'detail', (v) => { p.plasmaScale = v; })));
+      root.appendChild(field('Cycle (ms)', numberInput(p.plasmaMs, 200, 60000, 100,
+        (v) => edit('plasma cycle', () => {
+          p.plasmaMs = Math.max(200, Math.round(v));
+          this.buildLayer();
+        }))));
+      root.appendChild(hint('Three overlapping sine fields across the real light positions. '
+        + 'Every light gets its own colour and brightness, which is the sort of thing that '
+        + 'is hopeless to write by hand.'));
     }
 
     if (p.type === 'blink') {

@@ -11,7 +11,7 @@ const S = (id, over) => Object.assign(shapeDefaults(id), over || {});
  * light the lights directly - they are the ones that read well on a sparse
  * playfield - and the shape-based groups follow.
  */
-export const GROUP_ORDER = ['Patterns', 'Wipes', 'Radial', 'Solid & blink'];
+export const GROUP_ORDER = ['Patterns', 'Wipes', 'Radial', 'Flashes'];
 
 export const PRESETS = [
   {
@@ -45,6 +45,64 @@ export const PRESETS = [
     build: (c) => makePatternLayer({
       name: 'Marquee', durationMs: 3000,
       pattern: { type: 'marquee', color: c, every: 3, marqueeMs: 140, order: 'name' },
+    }),
+  },
+
+  {
+    id: 'fire',
+    name: 'Fire',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Fire', durationMs: 4000,
+      pattern: {
+        type: 'fire', color: c, color2: '#401000',
+        fireMs: 90, fireHeat: 0.8, fireJitter: 0.45,
+      },
+    }),
+  },
+
+  {
+    id: 'pinwheel',
+    name: 'Pinwheel',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Pinwheel', durationMs: 3000,
+      pattern: { type: 'pinwheel', color: c, arms: 3, spinMs: 2000, armWidth: 0.35 },
+    }),
+  },
+
+  {
+    id: 'scanner',
+    name: 'Scanner',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Scanner', durationMs: 2800,
+      pattern: { type: 'scanner', color: c, axis: 'y', sweepMs: 1400, bandWidth: 0.22, tailLen: 0.25 },
+    }),
+  },
+
+  {
+    id: 'rain',
+    name: 'Rain',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Rain', durationMs: 4000,
+      pattern: { type: 'rain', color: c, drops: 6, dropMs: 1400, tailLen: 0.25 },
+    }),
+  },
+
+  {
+    id: 'plasma',
+    name: 'Plasma',
+    group: 'Patterns',
+    pattern: true,
+    build: (c) => makePatternLayer({
+      name: 'Plasma', durationMs: 5000,
+      pattern: { type: 'plasma', color: c, color2: '#2060ff', plasmaScale: 2.2, plasmaMs: 3000 },
     }),
   },
 
@@ -84,43 +142,13 @@ export const PRESETS = [
     }),
   },
 
-  {
-    id: 'solid-on',
-    name: 'Solid on',
-    group: 'Solid & blink',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Solid', durationMs: 1000,
-      pattern: { type: 'solid', color: c },
-    }),
-  },
 
-  {
-    id: 'blink-slow',
-    name: 'Blink 0.5s',
-    group: 'Solid & blink',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Blink', durationMs: 3000,
-      pattern: { type: 'blink', color: c, onMs: 500, offMs: 500 },
-    }),
-  },
 
-  {
-    id: 'blink-fast',
-    name: 'Blink fast',
-    group: 'Solid & blink',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Fast blink', durationMs: 2000,
-      pattern: { type: 'blink', color: c, onMs: 120, offMs: 120 },
-    }),
-  },
 
   {
     id: 'pulse',
     name: 'Pulse (whole field)',
-    group: 'Solid & blink',
+    group: 'Flashes',
     build: (c) => makeLayer({
       name: 'Pulse', shapeId: 'halo', durationMs: 500, repeat: 2,
       shapeParams: S('halo', { falloff: 1.4, core: 0.35 }),
@@ -135,7 +163,7 @@ export const PRESETS = [
   {
     id: 'colour-fade',
     name: 'Colour fade (whole field)',
-    group: 'Solid & blink',
+    group: 'Flashes',
     build: (c) => makeLayer({
       name: 'Colour fade', shapeId: 'bar', durationMs: 1500, colorLerp: 'hsl',
       shapeParams: S('bar', { len: 3, thick: 3 }),

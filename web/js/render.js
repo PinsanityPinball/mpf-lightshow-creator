@@ -449,6 +449,22 @@ export class ShowRenderer {
   }
 
   /**
+   * A period that divides the clip evenly.
+   *
+   * A pattern's own timing has nothing to do with how long its layer runs, so
+   * stretching a clip used to leave the pattern finishing early and holding, or
+   * cut mid-cycle and jump on the repeat. Rounding to a whole number of cycles
+   * fixes both, at the cost of running fractionally faster or slower than the
+   * number typed in.
+   */
+  fitPeriod(layer, wanted, on) {
+    const want = Math.max(1, wanted);
+    if (!on || !(layer.durationMs > 0)) return want;
+    const cycles = Math.max(1, Math.round(layer.durationMs / want));
+    return layer.durationMs / cycles;
+  }
+
+  /**
    * A blink/chase pattern, applied straight to the targeted lights.
    * No canvas involved, so the colours land exactly as written.
    */
@@ -517,14 +533,7 @@ export class ShowRenderer {
     if (p.type === 'wavy') {
       const b = targetBounds(layer, lights, mask);
       if (!b.n) return false;
-      // A wave that is mid-stroke when the clip ends jumps on the loop. Snapping
-      // the period to a whole number of cycles across the clip removes the seam;
-      // the wave runs at very nearly the requested speed either way.
-      let period = Math.max(1, p.periodMs);
-      if (p.loop !== false && layer.durationMs > 0) {
-        const cycles = Math.max(1, Math.round(layer.durationMs / period));
-        period = layer.durationMs / cycles;
-      }
+      const period = this.fitPeriod(layer, p.periodMs, p.loop !== false && p.fit !== false);
       const lambda = Math.max(0.02, p.wavelength);
       const phase = t / period;
       const floor = Math.max(0, Math.min(1, p.floorLevel));
@@ -568,7 +577,12 @@ export class ShowRenderer {
       const cols = Math.max(1, Math.round(p.cols));
       const rows = Math.max(1, Math.round(p.rows));
       const cells = cols * rows;
-      const fillMs = Math.max(1, p.fillMs);
+      // Fit means one complete fill over the clip. A stack that reached the top
+      // early then sat there was the most obvious case of a pattern ignoring
+      // how long its layer runs.
+      const fillMs = p.fit !== false && layer.durationMs > 0
+        ? layer.durationMs
+        : Math.max(1, p.fillMs);
       const filled = Math.min(cells, (t / fillMs) * cells);
 
       // Cell fill order. Tetris-style is bottom row first, left to right.
@@ -607,12 +621,21 @@ export class ShowRenderer {
         const rank = Math.floor(filled);
         const frac = filled - rank;
         const target = rankCell(rank);
-        const horizontal = p.fillOrder === 'left-right' || p.fillOrder === 'right-left';
-        if (horizontal) {
-          const from = p.fillOrder === 'left-right' ? 0 : cols - 1;
+        // A piece enters from the edge the stack is growing AWAY from, so it
+        // always travels over empty cells. Entering from a fixed edge meant a
+        // top-down stack sent its pieces down through the rows it had already
+        // filled, where they were hidden - only bottom-up ever showed a fall.
+        if (p.fillOrder === 'left-right') {
+          const from = cols - 1;
           moving = { rank, col: Math.round(from + (target.col - from) * frac), row: target.row };
+        } else if (p.fillOrder === 'right-left') {
+          const from = 0;
+          moving = { rank, col: Math.round(from + (target.col - from) * frac), row: target.row };
+        } else if (p.fillOrder === 'top-down') {
+          const from = rows - 1;                            // rises from the bottom
+          moving = { rank, col: target.col, row: Math.round(from + (target.row - from) * frac) };
         } else {
-          const from = p.fillOrder === 'top-down' ? 0 : 0;   // always enters at the top
+          const from = 0;                                   // bottom-up: falls from the top
           moving = { rank, col: target.col, row: Math.round(from + (target.row - from) * frac) };
         }
       }
@@ -643,8 +666,12 @@ export class ShowRenderer {
       const n = order.length;
       if (!n) return false;
       const every = Math.max(2, Math.round(p.every));
-      const stepMs = Math.max(1, p.marqueeMs);
-      const shift = Math.floor(t / stepMs) % every;
+      // fit = a whole number of complete cycles, a cycle being `every` steps
+      const stepMs = p.fit !== false && layer.durationMs > 0
+        ? Math.max(1, this.fitPeriod(layer, p.marqueeMs * every, true) / every)
+        : Math.max(1, p.marqueeMs);
+      const raw = Math.floor(t / stepMs) % every;
+      const shift = p.reverse ? (every - raw) % every : raw;
       for (let j = 0; j < n; j++) {
         const lit = ((j - shift) % every + every) % every === 0;
         if (lit) put(order[j], p.color, 1);
@@ -653,11 +680,177 @@ export class ShowRenderer {
       return true;
     }
 
+    if (p.type === 'fire') {
+      // Per-light flicker on a warm ramp, hottest low down and cooling as it
+      // rises. No geometry at all - the character comes from noise, which is
+      // what makes it read differently from every other pattern here.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.fireMs, p.fit !== false);
+      const base = hashString(layer.seedKey || layer.id) ^ ((p.seed | 0) * 2654435761);
+      const heat = Math.max(0, Math.min(1, p.fireHeat));
+      const jitter = Math.max(0, Math.min(1, p.fireJitter));
+      const ca = hexToRgb(p.color);            // the hot colour, low down
+      const cb = hexToRgb(p.color2 || p.color); // the cool colour, up top
+
+      // two offset sample points per light, blended, so the flicker moves
+      // smoothly rather than stepping
+      const u = (t / period) % 1;
+      const step = Math.floor(t / period);
+      const blend = u;
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        const ly = (l.y - b.minY) / (b.h || 1);
+        const r1 = mulberry32((base ^ (i * 0x9E3779B1) ^ (step * 0x85EBCA6B)) >>> 0)();
+        const r2 = mulberry32((base ^ (i * 0x9E3779B1) ^ ((step + 1) * 0x85EBCA6B)) >>> 0)();
+        const noise = r1 + (r2 - r1) * blend;
+
+        // y grows downward, so 1 - ly is height above the base of the group
+        const up = 1 - ly;
+        let level = heat * (1 - up * 0.85) + noise * jitter - up * 0.15;
+        level = Math.max(0, Math.min(1, level));
+        if (level <= 0.01) continue;
+        const hex = rgbToHex(ca.r + (cb.r - ca.r) * (1 - level),
+                             ca.g + (cb.g - ca.g) * (1 - level),
+                             ca.b + (cb.b - ca.b) * (1 - level));
+        put(i, hex, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'pinwheel') {
+      // Arms rotating about the centre. Radar sweep does something similar with
+      // a drawn shape; this uses the light angles directly, so it stays even
+      // however the lights are scattered.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.spinMs, p.fit !== false);
+      const arms = Math.max(1, Math.round(p.arms));
+      const wide = Math.max(0.02, Math.min(1, p.armWidth));
+      const cx = (b.minX + b.maxX) / 2;
+      const cy = (b.minY + b.maxY) / 2;
+      const dir = p.reverse ? -1 : 1;
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        const ang = Math.atan2((l.y - cy) / (b.h || 1), (l.x - cx) / (b.w || 1));
+        const u = (ang / (Math.PI * 2) + 1) % 1;              // 0..1 around
+        const phase = (u * arms - dir * (t / period) * arms) % 1;
+        const f = (phase + 1) % 1;
+        if (f > wide) continue;
+        const level = 1 - f / wide;                            // bright leading edge
+        if (level > 0.004) put(i, p.color, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'scanner') {
+      // The Knight Rider band: a soft bar sweeping back and forth with a tail.
+      // Positional, so it sweeps the real playfield rather than a light index.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.sweepMs, p.fit !== false);
+      const width = Math.max(0.02, p.bandWidth);
+      const u = (t / period) % 1;
+      // a bounce is a triangle wave; without it the band wraps round instead
+      const head = p.bounce !== false ? (u < 0.5 ? u * 2 : 2 - u * 2) : u;
+      const goingBack = p.bounce !== false && u >= 0.5;
+      const dir = (p.reverse ? -1 : 1) * (goingBack ? -1 : 1);
+      const tail = Math.max(0, Math.min(1, p.tailLen));
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        const pos = p.axis === 'x'
+          ? (l.x - b.minX) / (b.w || 1)
+          : (l.y - b.minY) / (b.h || 1);
+        const gap = pos - head;
+        const behind = gap * -dir;                    // positive = in the tail
+        let level = 0;
+        if (Math.abs(gap) < width) level = 1 - Math.abs(gap) / width;
+        else if (tail > 0 && behind > 0 && behind < tail) level = (1 - behind / tail) * 0.55;
+        if (level > 0.004) put(i, p.color, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'rain') {
+      // Drops falling down the playfield, each with a trail. Seeded from the
+      // layer, so it replays identically and the export matches the preview.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.dropMs, p.fit !== false);
+      const n = Math.max(1, Math.round(p.drops));
+      const tail = Math.max(0.02, p.tailLen);
+      const base = hashString(layer.seedKey || layer.id) ^ ((p.seed | 0) * 2654435761);
+
+      // each drop keeps a fixed column and a fixed offset into the cycle
+      const cols = [];
+      for (let k = 0; k < n; k++) {
+        const rand = mulberry32((base ^ (k * 0x9E3779B1)) >>> 0);
+        cols.push({ x: rand(), offset: rand(), speed: 0.75 + rand() * 0.5 });
+      }
+      const colWidth = Math.max(0.04, 1 / (n * 1.5));
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        const lx = (l.x - b.minX) / (b.w || 1);
+        const ly = (l.y - b.minY) / (b.h || 1);
+        let level = 0;
+        for (const d of cols) {
+          const dx = Math.abs(lx - d.x);
+          if (dx > colWidth) continue;
+          const head = ((t / period) * d.speed + d.offset) % 1;
+          const below = ly - head;      // y grows downward in light space
+          if (below < -0.02 || below > tail) continue;
+          const along = below <= 0 ? 1 : 1 - below / tail;
+          level = Math.max(level, along * (1 - dx / colWidth));
+        }
+        if (level > 0.004) put(i, p.color, level);
+      }
+      return true;
+    }
+
+    if (p.type === 'plasma') {
+      // Overlapping sine fields: a slow, organic wash that never quite repeats
+      // its shape. Hand-writing anything like it per light is hopeless.
+      const b = targetBounds(layer, lights, mask);
+      if (!b.n) return false;
+      const period = this.fitPeriod(layer, p.plasmaMs, p.fit !== false);
+      const k = Math.max(0.2, p.plasmaScale) * Math.PI;
+      const ph = (t / period) * Math.PI * 2;
+      const ca = hexToRgb(p.color);
+      const cb = hexToRgb(p.color2 || p.color);
+
+      for (let i = 0; i < lights.length; i++) {
+        if (mask && !mask[i]) continue;
+        const l = lights[i];
+        const lx = (l.x - b.minX) / (b.w || 1);
+        const ly = (l.y - b.minY) / (b.h || 1);
+        const v = Math.sin(lx * k + ph)
+                + Math.sin(ly * k * 1.3 - ph * 0.8)
+                + Math.sin((lx + ly) * k * 0.7 + ph * 1.4);
+        const u = (v / 3 + 1) / 2;                      // 0..1
+        const hex = rgbToHex(ca.r + (cb.r - ca.r) * u,
+                             ca.g + (cb.g - ca.g) * u,
+                             ca.b + (cb.b - ca.b) * u);
+        put(i, hex, 0.25 + u * 0.75);
+      }
+      return true;
+    }
+
     if (p.type === 'chase') {
       const order = orderedTargets(layer, lights, mask);
       const n = order.length;
       if (!n) return false;
-      const stepMs = Math.max(1, p.stepMs);
+      // fit = exactly one pass along the lights over the clip
+      const stepMs = p.fit !== false && layer.durationMs > 0
+        ? Math.max(1, layer.durationMs / n)
+        : Math.max(1, p.stepMs);
       const head = Math.floor(t / stepMs);
       const width = Math.max(1, Math.round(p.width));
       const tail = Math.max(0, Math.round(p.tail));
