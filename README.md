@@ -4,8 +4,7 @@ A light-show editor for home-brew pinball machines running MPF 0.50+.
 
 This is a rebuild of the original BlitzMax `showcreator` tool. Same idea — draw
 moving shapes over a playfield, sample what each LED sees, export an MPF show —
-but with parametric shapes, a real timeline, and direct manipulation instead of
-single-key commands.
+but with parametric shapes, a real timeline, and direct manipulation.
 
 ---
 
