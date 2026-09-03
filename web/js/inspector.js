@@ -1862,12 +1862,51 @@ export class Inspector {
 
     const effective = Math.round(projectDuration(p));
 
+    // How long the content actually is, whatever the show is set to. Needed
+    // both to seed a fixed length and to notice one that cuts the end off.
+    let content = 0;
+    for (const l of p.layers) content = Math.max(content, layerEndMs(l));
+    content = Math.round(content) || 1000;
+
     root.appendChild(section('Show length'));
-    root.appendChild(field('Length (ms)', numberInput(p.durationMs, 0, 600000, 1,
-      (v) => edit('duration', () => { p.durationMs = Math.max(0, Math.round(v)); this.buildShow(); }))));
-    root.appendChild(hint(p.durationMs > 0
-      ? `Fixed at ${effective} ms (${(effective / 1000).toFixed(2)} s). Set to 0 to follow the layers.`
-      : `Following the layers: ${effective} ms (${(effective / 1000).toFixed(2)} s).`));
+    // This used to be a bare number where 0 meant "follow the layers", which
+    // nobody would guess. Saying it in words also makes the fixed option
+    // findable, and it is the cure for the timeline rescaling underneath you
+    // every time a layer gets longer.
+    root.appendChild(field('Length', selectBox(p.durationMs > 0 ? 'fixed' : 'auto', [
+      ['auto', 'Follow the layers'],
+      ['fixed', 'Fixed length'],
+    ], (v) => edit('show length', () => {
+      // Seeded from what the show currently is, so picking Fixed never yanks
+      // the length to some unrelated number.
+      p.durationMs = v === 'fixed' ? content : 0;
+      this.buildShow();
+    }))));
+
+    if (p.durationMs > 0) {
+      root.appendChild(field('Length (ms)', numberInput(p.durationMs, 50, 600000, 10,
+        (v) => edit('duration', () => {
+          p.durationMs = Math.max(50, Math.round(v));
+          this.buildShow();
+        }))));
+      root.appendChild(hint(`Fixed at ${effective} ms (${(effective / 1000).toFixed(2)} s). `
+        + 'The timeline keeps this scale no matter what the layers do.'));
+      if (content > p.durationMs) {
+        root.appendChild(el('div', {
+          class: 'warn',
+          text: `The layers run to ${content} ms, so the last `
+            + `${content - p.durationMs} ms will not be exported. Raise the length, `
+            + 'or switch back to following the layers, if that is not deliberate.',
+        }));
+      } else if (content < p.durationMs) {
+        root.appendChild(hint(`The layers finish at ${content} ms, so the show ends `
+          + `with ${p.durationMs - content} ms of darkness.`));
+      }
+    } else {
+      root.appendChild(hint(`Following the layers: ${effective} ms `
+        + `(${(effective / 1000).toFixed(2)} s). The timeline rescales whenever the `
+        + 'last layer moves or grows - pick a fixed length to hold it still.'));
+    }
 
     const target = el('input', { type: 'number', value: effective, min: 50, max: 600000, step: 10 });
     const fit = el('div', { class: 'field row' }, [
