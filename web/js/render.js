@@ -15,9 +15,72 @@ import {
   EASES,
   effectiveParams, hexToRgb, rgbToHex,
   layerInstancesAtTime, stateAtLocal,
+  transitionPhase, transitionMs,
 } from './project.js';
 
 const D2R = Math.PI / 180;
+
+/**
+ * How much of a layer is showing at each light while it arrives or leaves.
+ *
+ * Every transition is the same formula over a different per-light coordinate:
+ * a soft edge sweeps that coordinate from 0 to 1. Wipe measures across the
+ * playfield, iris measures out from the centre, dissolve measures a fixed
+ * random number per light - so they differ only in one line, and all of them
+ * stay smooth rather than snapping a light fully on.
+ *
+ * Returns a function of the light index, or null when there is nothing to do.
+ */
+function coverageFor(layer, lights, phase) {
+  const tr = layer.transition;
+  if (!tr || !phase) return null;
+  const p = Math.max(0, Math.min(1, phase.p));
+  if (tr.type === 'fade') return () => p;
+
+  const soft = Math.max(0.01, Math.min(1, tr.softness == null ? 0.25 : tr.softness));
+  const edge = p * (1 + soft);
+  const flip = !!tr.reverse;
+  const onY = tr.axis === 'y';
+
+  let coord;
+  if (tr.type === 'dissolve') {
+    // Fixed per light and stable across a reload, or the preview and the
+    // export would dissolve in different orders.
+    if (layer._trRndFor !== lights || layer._trRndSeed !== (tr.seed | 0)) {
+      const rnd = mulberry32(hashString(layer.seedKey || layer.id)
+        ^ ((tr.seed | 0) * 2654435761));
+      const a = new Float32Array(lights.length);
+      for (let i = 0; i < a.length; i++) a[i] = rnd();
+      layer._trRnd = a;
+      layer._trRndFor = lights;
+      layer._trRndSeed = tr.seed | 0;
+    }
+    const a = layer._trRnd;
+    coord = (i) => a[i];
+  } else if (tr.type === 'iris') {
+    coord = (i) => {
+      const dx = lights[i].x - 0.5;
+      const dy = lights[i].y - 0.5;
+      return Math.min(1, Math.sqrt(dx * dx + dy * dy) / 0.7071);
+    };
+  } else if (tr.type === 'split') {
+    coord = (i) => Math.min(1, Math.abs((onY ? lights[i].y : lights[i].x) - 0.5) * 2);
+  } else if (tr.type === 'blinds') {
+    const bands = Math.max(2, Math.min(40, tr.bands || 6));
+    coord = (i) => {
+      const v = (onY ? lights[i].y : lights[i].x) * bands;
+      return v - Math.floor(v);
+    };
+  } else {   // wipe
+    coord = (i) => (onY ? lights[i].y : lights[i].x);
+  }
+
+  return (i) => {
+    const c = flip ? 1 - coord(i) : coord(i);
+    const v = (edge - c) / soft;
+    return v <= 0 ? 0 : (v >= 1 ? 1 : v);
+  };
+}
 
 // Neighbour graphs for the contagion pattern, keyed on the lights array so a
 // new light map drops them automatically.
@@ -316,7 +379,9 @@ export class ShowRenderer {
         const st = layerStateAtTime(layer, timeMs);
         if (!st) continue;
         if (mutates) this.resolveAverage(lights.length);
-        if (this.accumulateShow(layer, lights, timeMs, st, toLin)) showLayers++;
+        if (this.accumulateShow(layer, lights, timeMs, st, toLin,
+          coverageFor(layer, lights,
+            transitionPhase(layer, timeMs - layer.startMs)))) showLayers++;
         continue;
       }
       if (layer.kind === 'pattern') {
@@ -344,7 +409,8 @@ export class ShowRenderer {
       if (mutates) this.resolveAverage(lights.length);
       let drew = false;
       for (const inst of live) {
-        if (this.drawAndAccumulate(layer, inst.state, lights, opts, toLin)) drew = true;
+        if (this.drawAndAccumulate(layer, inst.state, lights, opts, toLin,
+          coverageFor(layer, lights, transitionPhase(layer, inst.local)))) drew = true;
       }
       if (drew) shapeLayers++;
     }
@@ -389,7 +455,7 @@ export class ShowRenderer {
   }
 
   /** Render one shape layer, sample it, then composite it for display. */
-  drawAndAccumulate(layer, st, lights, opts, toLin) {
+  drawAndAccumulate(layer, st, lights, opts, toLin, coverage) {
     const def = SHAPE_BY_ID.get(layer.shapeId);
     if (!def) return false;
 
@@ -455,7 +521,12 @@ export class ShowRenderer {
       }
       if (sa <= 0) continue;
 
-      const cov = (sa / total) * alphaScale;
+      let cov = (sa / total) * alphaScale;
+      if (coverage) {
+        const k = coverage(i);
+        if (k <= 0) continue;
+        cov *= k;
+      }
       const j = i * 3;
       if (erasing) {
         // An eraser turns lights off wherever it covers them. Its own colour is
@@ -464,13 +535,14 @@ export class ShowRenderer {
         const keep = 1 - cov;
         accum[j] *= keep; accum[j + 1] *= keep; accum[j + 2] *= keep;
       } else if (averaging) {
-        this.addAverage(i, (sr / total) * alphaScale,
-                        (sg / total) * alphaScale, (sb / total) * alphaScale);
+        const a2 = alphaScale * (coverage ? coverage(i) : 1);
+        this.addAverage(i, (sr / total) * a2, (sg / total) * a2, (sb / total) * a2);
       } else if (additive) {
         // premultiplied average over the sample disc
-        accum[j] += (sr / total) * alphaScale;
-        accum[j + 1] += (sg / total) * alphaScale;
-        accum[j + 2] += (sb / total) * alphaScale;
+        const a2 = alphaScale * (coverage ? coverage(i) : 1);
+        accum[j] += (sr / total) * a2;
+        accum[j + 1] += (sg / total) * a2;
+        accum[j + 2] += (sb / total) * a2;
       } else {
         const inv = 1 - cov;
         accum[j] = accum[j] * inv + (sr / sa) * cov;
@@ -552,7 +624,7 @@ export class ShowRenderer {
   }
 
   /** An imported MPF show contributes light colours with no pixels involved. */
-  accumulateShow(layer, lights, timeMs, st, toLin) {
+  accumulateShow(layer, lights, timeMs, st, toLin, coverage) {
     const frame = showFrameAt(layer, timeMs);
     if (frame < 0) return false;
     const resolved = resolveShow(layer);
@@ -572,10 +644,16 @@ export class ShowRenderer {
       const j = idx[i];
       if (j < 0) continue;
       if (mask && !mask[j]) continue;
+      let a2 = alphaScale;
+      if (coverage) {
+        const kv = coverage(j);
+        if (kv <= 0) continue;
+        a2 *= kv;
+      }
       const p = base + i * 3;
-      const r = toLin[resolved.data[p]] * alphaScale;
-      const g = toLin[resolved.data[p + 1]] * alphaScale;
-      const b = toLin[resolved.data[p + 2]] * alphaScale;
+      const r = toLin[resolved.data[p]] * a2;
+      const g = toLin[resolved.data[p + 1]] * a2;
+      const b = toLin[resolved.data[p + 2]] * a2;
       const k = j * 3;
       if (erasing) {
         // brightness of the imported show decides how hard it erases
@@ -587,7 +665,7 @@ export class ShowRenderer {
       } else if (additive) {
         accum[k] += r; accum[k + 1] += g; accum[k + 2] += b;
       } else {
-        const inv = 1 - alphaScale;
+        const inv = 1 - a2;
         accum[k] = accum[k] * inv + r;
         accum[k + 1] = accum[k + 1] * inv + g;
         accum[k + 2] = accum[k + 2] * inv + b;
@@ -784,10 +862,19 @@ export class ShowRenderer {
     if (!p) return false;
     // localT lets the caller run one specific firing of an instanced layer;
     // without it the layer's own single firing is used
-    const t = localT == null ? patternTimeAt(layer, timeMs) : localT;
+    let t = localT == null ? patternTimeAt(layer, timeMs) : localT;
     if (t === null) return false;
     const alphaScale = st ? Math.max(0, Math.min(1, st.alpha)) : 1;
     if (alphaScale <= 0) return false;
+
+    // The transition reads the raw local time; the pattern itself runs on body
+    // time, so a dissolve-in does not also slide the pattern's own animation.
+    const coverage = coverageFor(layer, lights, transitionPhase(layer, t));
+    const td = transitionMs(layer);
+    if (td) {
+      const body = Math.max(1, layer.durationMs) * Math.max(1, layer.repeat || 1);
+      t = Math.max(0, Math.min(body, t - td));
+    }
 
     const mask = layerMask(layer, lights);
     const erasing = layer.blend === 'erase';
@@ -796,6 +883,11 @@ export class ShowRenderer {
     const accum = this.accum;
 
     const put = (lightIndex, hex, gain) => {
+      if (coverage) {
+        const kv = coverage(lightIndex);
+        if (kv <= 0) return;
+        gain *= kv;
+      }
       const c = hexToRgb(hex);
       const k = lightIndex * 3;
       if (erasing) {

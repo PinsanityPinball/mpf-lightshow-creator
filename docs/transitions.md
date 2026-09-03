@@ -1,7 +1,20 @@
 # Transitions
 
-> **Status: planned, nothing built.** Written up so the shape can be argued with
-> before any code exists.
+> **Status: tier 1 shipped.** Fade, Dissolve, Wipe, Iris, Split and Blinds all
+> work, on shape, pattern and imported-show layers alike, and default to None -
+> a layer with no transition carries no transition field at all, so existing
+> shows reload and render byte-identically. Verified by rendering
+> `attract300.json` (3,750 layers) at eight points across its 300 seconds
+> before and after the change: all eight signatures matched.
+>
+> **Not built yet: tier 2** - Flip, Push and Doors, which need the layer
+> transformed before it is sampled rather than only masked.
+>
+> **The auto-blend rule has no trigger yet.** It was written for Doors and
+> Flip, where the top layer has to hide what is beneath. Every tier-1
+> transition masks *itself* rather than uncovering a neighbour, so it reads
+> correctly on Add and on Normal, and switching someone's blend for it would be
+> a change with no benefit. The rule stands; it lands with tier 2.
 
 The ask was PowerPoint-style transitions — wipe, dissolve, iris, doors, flip —
 placed *in between* two layer items. The effects are worth having. The
@@ -205,11 +218,15 @@ machine, and keep them only if they earn it.
 
 ## Build order
 
-1. Tier 1 mask plumbing — float coverage folded into `alphaScale`.
-2. Fade and Dissolve on it, replacing the fade checkboxes. Confirm export
-   determinism still holds.
-3. Wipe and Iris. These are where the visual payoff starts.
-4. Export-cost warning, before anyone builds a show full of them.
+1. ~~Tier 1 mask plumbing — float coverage folded into `alphaScale`.~~ Done.
+2. ~~Fade and Dissolve on it.~~ Done, and determinism holds: a seeded dissolve
+   renders identically twice and survives a save/reload. The fade checkboxes
+   were **left in place** - removing a working control before its replacement
+   has been used in anger seemed the wrong order. Unifying them is the next
+   tidy-up, not a blocker.
+3. ~~Wipe and Iris~~, plus Split and Blinds. Done.
+4. ~~Export-cost warning.~~ Done: the export dialog says so when a show with
+   transitions comes out over 400 kB.
 5. Flip and Push, as presets over existing size and motion keys.
 6. Doors — the clipped two-halves draw.
 7. Blinds and checkerboard last, on the real machine, kept only if they read.

@@ -11,6 +11,7 @@ import {
   animateParam, unanimateParam, effectiveParams,
   setScaleRange, scaleRange, scaleIsUniform, fadeState, setFades,
   setRotationRange, rotationRange, setColourRange, colourRange,
+  TRANSITIONS, makeTransition, layerSpanMs,
 } from './project.js';
 import { showCoverage, layerMask } from './render.js';
 import {
@@ -741,6 +742,8 @@ export class Inspector {
     ]));
     root.appendChild(hint(`Ends at ${Math.round(layerEndMs(layer))} ms.`));
 
+    this.paneTransition(root, layer, edit);
+
     this.paneRepeats(root, layer, edit);
 
     root.appendChild(section('Blend'));
@@ -761,6 +764,78 @@ export class Inspector {
         + 'The result is scaled back up to the brightest layer that reached it, so '
         + 'mixing does not dim the light. Averaging layers mix with each other; '
         + 'anything on Add still stacks on top.'));
+    }
+  }
+
+  /**
+   * How the layer arrives and how it leaves.
+   *
+   * One duration serves both ends, and the transition extends the layer rather
+   * than eating into it: the body still plays for its full length, with the In
+   * before it and the Out after. See docs/transitions.md.
+   */
+  paneTransition(root, layer, edit) {
+    root.appendChild(section('Transition'));
+    const tr = layer.transition || makeTransition();
+    const type = tr.type || 'none';
+
+    // Written only when there is something to write. A layer with no
+    // transition carries no transition field at all, so old shows reload
+    // byte-identical and a 3,750-layer show gains nothing.
+    const write = (label, fn) => edit(label, () => {
+      const next = makeTransition(Object.assign({}, tr));
+      fn(next);
+      if (next.type === 'none') delete layer.transition;
+      else layer.transition = next;
+      this.buildLayer();
+    });
+
+    root.appendChild(field('Style', selectBox(type,
+      TRANSITIONS.map((t) => [t.id, t.name]),
+      (v) => write('transition', (n) => { n.type = v; }))));
+
+    if (type === 'none') {
+      root.appendChild(hint('The layer starts and stops outright. Pick a style to '
+        + 'give it a way in and a way out - the same one is used at both ends, '
+        + 'running forwards on the way in and backwards on the way out.'));
+      return;
+    }
+
+    root.appendChild(field('Time each end (ms)',
+      numberInput(tr.durationMs, 0, 10000, 10,
+        (v) => write('transition time', (n) => { n.durationMs = Math.max(0, v); }))));
+
+    if (type !== 'fade' && type !== 'dissolve') {
+      root.appendChild(field('Direction', selectBox(
+        (tr.axis === 'y' ? 'y' : 'x') + (tr.reverse ? '-' : '+'), [
+          ['x+', type === 'split' ? 'Out from the middle' : 'Left to right'],
+          ['x-', type === 'split' ? 'In to the middle' : 'Right to left'],
+          ['y+', type === 'split' ? 'Out from the middle, vertically' : 'Top to bottom'],
+          ['y-', type === 'split' ? 'In to the middle, vertically' : 'Bottom to top'],
+        ], (v) => write('transition direction', (n) => {
+          n.axis = v[0]; n.reverse = v[1] === '-';
+        }))));
+    }
+    if (type === 'blinds') {
+      root.appendChild(field('Bands', numberInput(tr.bands, 2, 40, 1,
+        (v) => write('transition bands', (n) => { n.bands = v; }))));
+    }
+    if (type !== 'fade') {
+      root.appendChild(slider('Edge softness', tr.softness, { min: 0.02, max: 1, step: 0.02 },
+        (v) => write('transition softness', (n) => { n.softness = v; })));
+    }
+    if (type === 'dissolve') {
+      root.appendChild(field('Seed', numberInput(tr.seed || 0, 0, 9999, 1,
+        (v) => write('transition seed', (n) => { n.seed = Math.round(v); }))));
+    }
+
+    const each = Math.max(0, tr.durationMs || 0);
+    root.appendChild(hint(`Adds ${each} ms before and ${each} ms after, so this clip `
+      + `now runs ${Math.round(layerSpanMs(layer))} ms in total. The layer's own `
+      + 'length is unchanged.'));
+    if (each > 0 && each * 2 > Math.max(1, layer.durationMs)) {
+      root.appendChild(hint('That is longer than the layer itself - most of what you '
+        + 'see will be it arriving and leaving.'));
     }
   }
 
@@ -1537,6 +1612,8 @@ export class Inspector {
       checkbox('Visible after', layer.holdAfter, (v) => edit('hold', () => { layer.holdAfter = v; })),
     ]));
 
+    this.paneTransition(root, layer, edit);
+
     root.appendChild(hint(count
       ? `Drives ${count} light${count === 1 ? '' : 's'} at exact colours - no shape to `
         + 'position and no pixel sampling, so the values land precisely as set.'
@@ -1679,6 +1756,8 @@ export class Inspector {
       })),
       checkbox('Hold after', layer.holdAfter, (v) => edit('hold', () => { layer.holdAfter = v; })),
     ]));
+
+    this.paneTransition(root, layer, edit);
     root.appendChild(hint('Brightness comes from the keyframes on the Keyframe tab - '
       + 'set the first or last to 0 to fade the whole show in or out.'));
   }

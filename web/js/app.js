@@ -1530,6 +1530,23 @@ class App {
         + `cue now happens ${s.headShiftMs} ms earlier than on the timeline. `
         + 'Turn off "Trim dark frames at the start" if this show is cut to audio or video.',
     }) : null;
+    // The exporter writes only the lights that changed in each step, and a
+    // transition is "change many lights slightly, every frame" - exactly what
+    // defeats that. Measured, two static washes over 435 lights for 4s: a hard
+    // cut is 2 steps and 25 kB, the same pair crossfaded is 80 steps and 1 MB.
+    // Worth saying out loud before someone wonders why the file got big.
+    const withTransitions = this.project.layers.filter(
+      (l) => l.transition && l.transition.type !== 'none').length;
+    const kb = result.yaml.length / 1024;
+    const costWarning = (withTransitions && kb > 400) ? el('div', {
+      class: 'warn',
+      text: `${withTransitions} layer${withTransitions === 1 ? ' has a transition' : 's have transitions'}`
+        + `, and this show came to ${Math.round(kb)} kB. Transitions change many lights `
+        + 'a little on every frame, which stops identical frames being merged - '
+        + 'they are usually the reason a show grows. Shortening them, or using '
+        + 'them on fewer layers, is the fastest way to bring it back down.',
+    }) : null;
+
     const trimmed = (s.trimmedHead || 0) + (s.trimmedTail || 0);
     const info = el('div', { class: 'stat-grid' }, [
       el('span', { text: 'Steps' }), el('span', { text: `${s.frames} (${s.changedFrames} with changes, ${s.idleFrames} idle)` }),
@@ -1541,6 +1558,7 @@ class App {
 
     const body2 = el('div', {}, [
       headWarning,
+      costWarning,
       info,
       el('div', { class: 'sec', text: 'File name' }),
       nameInput,

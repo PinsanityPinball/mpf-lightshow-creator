@@ -229,9 +229,79 @@ export function layerFireTimes(layer) {
   return at;
 }
 
-/** How long one firing lasts. */
+// ---------------------------------------------------------------------------
+// transitions
+//
+// How a layer arrives and how it leaves. Deliberately a property of one layer
+// rather than an object sitting between two: layers here run dozens deep and
+// fire repeatedly, so there is no stable "next layer" to anchor to. See
+// docs/transitions.md.
+// ---------------------------------------------------------------------------
+
+export const TRANSITIONS = [
+  { id: 'none', name: 'None' },
+  { id: 'fade', name: 'Fade' },
+  { id: 'dissolve', name: 'Dissolve' },
+  { id: 'wipe', name: 'Wipe' },
+  { id: 'iris', name: 'Iris' },
+  { id: 'split', name: 'Split' },
+  { id: 'blinds', name: 'Blinds' },
+];
+
+export const TRANSITION_NAME = new Map(TRANSITIONS.map((t) => [t.id, t.name]));
+
+/** Nothing is the default: an existing show must look exactly as it did. */
+export function makeTransition(over = {}) {
+  const t = Object.assign({
+    type: 'none',
+    durationMs: 300,   // one control, used for both the In and the Out
+    axis: 'x',         // wipe and blinds: which way it travels
+    reverse: false,    // and from which end
+    softness: 0.25,    // width of the moving edge, as a fraction of the field
+    bands: 6,          // blinds only
+    seed: 0,           // dissolve only
+  }, over);
+  t.durationMs = Math.max(0, Math.round(t.durationMs) || 0);
+  t.softness = Math.max(0.01, Math.min(1, t.softness));
+  t.bands = Math.max(2, Math.min(40, Math.round(t.bands) || 6));
+  return t;
+}
+
+/** How long the In and the Out each last, or 0 when there is no transition. */
+export function transitionMs(layer) {
+  const tr = layer && layer.transition;
+  if (!tr || tr.type === 'none') return 0;
+  return Math.max(0, tr.durationMs || 0);
+}
+
+/**
+ * Where a layer is in its arrival or departure, or null while fully present.
+ *
+ * `p` is how present it is: 0 is absent, 1 is fully there. It runs up during
+ * the In and back down during the Out, so one coverage function serves both.
+ */
+export function transitionPhase(layer, local) {
+  const d = transitionMs(layer);
+  if (!d) return null;
+  const body = Math.max(1, layer.durationMs) * Math.max(1, layer.repeat || 1);
+  if (local < d) return { p: Math.max(0, local / d), out: false };
+  if (local >= d + body) {
+    return { p: Math.max(0, Math.min(1, 1 - (local - d - body) / d)), out: true };
+  }
+  return null;
+}
+
+/**
+ * How long one firing lasts.
+ *
+ * Transitions extend the layer rather than eating into it, and they extend it
+ * forwards: the body still plays for its full duration, with the In before it
+ * and the Out after. Extending backwards would drag a layer sitting at 0ms
+ * into negative time.
+ */
 export function layerSpanMs(layer) {
-  return Math.max(1, layer.durationMs) * Math.max(1, layer.repeat || 1);
+  const body = Math.max(1, layer.durationMs) * Math.max(1, layer.repeat || 1);
+  return body + transitionMs(layer) * 2;
 }
 
 export function layerEndMs(layer) {
@@ -620,7 +690,8 @@ export function layerInstancesAtTime(layer, timeMs) {
   const times = layerFireTimes(layer);
   if (times.length === 1) {
     const st = layerStateAtTime(layer, timeMs);
-    return st ? [{ state: st, index: 0, startMs: times[0] }] : [];
+    return st ? [{ state: st, index: 0, startMs: times[0],
+                   local: timeMs - times[0] }] : [];
   }
   const span = layerSpanMs(layer);
   const out = [];
@@ -639,7 +710,7 @@ export function layerInstancesAtTime(layer, timeMs) {
     }
     const st = stateAtLocal(layer, local, first, last);
     if (!st) continue;
-    out.push({ state: varyState(st, layer.vary, i), index: i, startMs: times[i] });
+    out.push({ state: varyState(st, layer.vary, i), index: i, startMs: times[i], local });
   }
   return out;
 }
@@ -648,6 +719,18 @@ export function layerInstancesAtTime(layer, timeMs) {
 export function stateAtLocal(layer, local, holdBefore, holdAfter) {
   const dur = Math.max(1, layer.durationMs);
   const reps = Math.max(1, layer.repeat || 1);
+  // A transition holds the first frame while the layer arrives and the last
+  // while it leaves, then hands the body its own local time. Without the hold
+  // the tails would fall outside the run and draw nothing, so a wipe-in would
+  // wipe in an empty layer.
+  const td = transitionMs(layer);
+  if (td) {
+    if (local >= 0 && local < td) return stateAt(layer, 0);
+    if (local >= td + dur * reps && local < td * 2 + dur * reps) {
+      return stateAt(layer, 1);
+    }
+    local -= td;
+  }
   // Holds belong to the ends of the whole run: before the first firing and
   // after the last. Without them here, ticking "Visible before"/"Visible
   // after" did nothing the moment a layer had a second firing.
@@ -667,7 +750,16 @@ export function layerStateAtTime(layer, timeMs) {
   if (!layer.enabled) return null;
   const dur = Math.max(1, layer.durationMs);
   const reps = Math.max(1, layer.repeat || 1);
-  const local = timeMs - layer.startMs;
+  let local = timeMs - layer.startMs;
+
+  const td = transitionMs(layer);
+  if (td) {
+    if (local >= 0 && local < td) return stateAt(layer, 0);
+    if (local >= td + dur * reps && local < td * 2 + dur * reps) {
+      return stateAt(layer, 1);
+    }
+    local -= td;
+  }
 
   if (local < 0) return layer.holdBefore ? stateAt(layer, 0) : null;
   if (local >= dur * reps) return layer.holdAfter ? stateAt(layer, 1) : null;
@@ -901,11 +993,12 @@ export function orderedTargets(layer, lights, mask) {
  * Returns null when the layer is not showing.
  */
 export function patternTimeAt(layer, timeMs) {
-  const dur = Math.max(1, layer.durationMs);
-  const reps = Math.max(1, layer.repeat || 1);
+  // The span, not the body: a pattern layer has to keep being drawn through
+  // its In and Out or there would be nothing there to transition.
+  const span = layerSpanMs(layer);
   const local = timeMs - layer.startMs;
   if (local < 0) return layer.holdBefore ? 0 : null;
-  if (local >= dur * reps) return layer.holdAfter ? dur * reps : null;
+  if (local >= span) return layer.holdAfter ? span : null;
   return local;
 }
 
@@ -1063,9 +1156,20 @@ export function resolveShow(layer) {
 export function showFrameAt(layer, timeMs) {
   const dur = Math.max(1, layer.durationMs);
   const reps = Math.max(1, layer.repeat || 1);
-  const local = timeMs - layer.startMs;
+  let local = timeMs - layer.startMs;
   const resolved = resolveShow(layer);
   if (!resolved) return -1;
+
+  // An imported show holds its first frame while it arrives and its last while
+  // it leaves, so a transition reveals the show rather than scrubbing it.
+  const td = transitionMs(layer);
+  if (td) {
+    if (local >= 0 && local < td) return 0;
+    if (local >= td + dur * reps && local < td * 2 + dur * reps) {
+      return resolved.frames - 1;
+    }
+    local -= td;
+  }
 
   if (local < 0) return layer.holdBefore ? 0 : -1;
   if (local >= dur * reps) return layer.holdAfter ? resolved.frames - 1 : -1;
