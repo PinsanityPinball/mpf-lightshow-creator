@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Personal machine data. None of this belongs in the repo: it describes one
+# specific pinball machine (or one person's shows) and is regenerated or
+# re-selected by whoever clones this. server.py recreates every folder below
+# on startup, so a fresh clone works with all of it missing.
+# ---------------------------------------------------------------------------
+
+# Light maps and light/tag files exported from a real machine
+lightmaps/
+!lightmaps/README.md
+
+# Shows you author here, and the MPF YAML they export to
+shows/
+exports/
+
+# MPF shows pulled in from a machine folder
+imports/
+
+# Playfield photos
+backgrounds/
+
+# Saved effect presets (yours, not the app's)
+effects/
+
+# Remembered folder/file choices, including absolute paths to your machine
+config.json
+
+# ---------------------------------------------------------------------------
+# Build and editor noise
+# ---------------------------------------------------------------------------
+__pycache__/
+*.pyc
+server.log
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

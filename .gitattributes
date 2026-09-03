@@ -1,0 +1,13 @@
+# Normalise text in the repo, and let git pick the working-copy endings.
+* text=auto
+
+# run.bat MUST check out with CRLF. cmd.exe mis-parses a batch file with LF
+# endings (it breaks mid-line), so this is not cosmetic - pin it regardless of
+# the cloner's core.autocrlf setting.
+*.bat text eol=crlf
+
+# Binary assets git should never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

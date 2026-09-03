@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Show Creator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%2710%27 fill=%27%234fc3f7%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="dot"></span>Show Creator</div>
+
+  <input id="showName" class="name-input" type="text" value="Untitled show" spellcheck="false" title="Show name">
+
+  <div class="group">
+    <label class="lbl" for="lightMap">Map</label>
+    <select id="lightMap" title="Light positions (monitor.yaml)"></select>
+    <label class="lbl" for="tagFile">Tags</label>
+    <select id="tagFile" title="Light tags (lights.yaml)"></select>
+    <button id="btnReloadMap" class="btn icon" title="Reload the light map and tags from disk">&#10227;</button>
+    <span id="lightCount" class="muted">–</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="group">
+    <button id="btnNew" class="btn" title="New show">New</button>
+    <button id="btnOpen" class="btn" title="Open a saved show">Open</button>
+    <button id="btnSave" class="btn" title="Save show (Ctrl+S)">Save</button>
+    <button id="btnUndo" class="btn icon" title="Undo (Ctrl+Z)">&#8630;</button>
+    <button id="btnRedo" class="btn icon" title="Redo (Ctrl+Shift+Z)">&#8631;</button>
+  </div>
+
+  <button id="btnExport" class="btn primary" title="Generate the MPF show YAML">Export show</button>
+</header>
+
+<div id="status" class="status"></div>
+
+<main>
+  <!-- ------------------------------------------------ playfield -->
+  <section class="stage-pane">
+    <div class="stage-tools">
+      <div class="seg" role="group" aria-label="View mode">
+        <button class="segbtn active" data-view="both" title="Shapes and lights">Both</button>
+        <button class="segbtn" data-view="shapes" title="Shapes only">Shapes</button>
+        <button class="segbtn" data-view="lights" title="Lights only — what the machine will do">Lights</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="tglOff" checked> Unlit</label>
+      <label class="chk"><input type="checkbox" id="tglGlow" checked> Glow</label>
+      <label class="chk"><input type="checkbox" id="tglOnion"> Onion</label>
+      <label class="chk"><input type="checkbox" id="tglPath" checked> Path</label>
+      <label class="rng" title="Drawn size of each light">
+        Size
+        <input type="range" id="rngLightSize" min="0.3" max="3" step="0.05" value="1">
+      </label>
+      <div class="spacer"></div>
+      <span id="hoverInfo" class="muted mono"></span>
+    </div>
+    <div class="stage-wrap">
+      <canvas id="stage"></canvas>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ inspector -->
+  <aside class="side-pane">
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="layer">Layer</button>
+      <button class="tab" data-tab="key">Keyframe</button>
+      <button class="tab" data-tab="show">Show</button>
+      <button class="tab" data-tab="export">Export</button>
+    </div>
+    <div class="tab-body">
+      <div class="tab-panel active" data-panel="layer" id="panelLayer"></div>
+      <div class="tab-panel" data-panel="key" id="panelKey"></div>
+      <div class="tab-panel" data-panel="show" id="panelShow"></div>
+      <div class="tab-panel" data-panel="export" id="panelExport"></div>
+    </div>
+  </aside>
+</main>
+
+<!-- ------------------------------------------------ timeline -->
+<footer class="timeline-pane">
+  <div class="transport">
+    <button id="btnStart" class="btn icon" title="Go to start (Home)">&#9198;</button>
+    <button id="btnPlay" class="btn icon play" title="Play / pause (Space)">&#9654;</button>
+    <button id="btnEnd" class="btn icon" title="Go to end (End)">&#9197;</button>
+    <button id="btnLoop" class="btn icon toggle active" title="Loop playback">&#8635;</button>
+
+    <span class="time mono"><b id="timeNow">0</b> ms</span>
+    <span class="muted mono">/ <span id="timeTotal">0</span> ms</span>
+    <span class="muted mono">frame <span id="frameNow">0</span>/<span id="frameTotal">0</span></span>
+
+    <div class="spacer"></div>
+
+    <label class="chk" title="Dragging on the playfield writes to the keyframe at the playhead">
+      <input type="checkbox" id="tglAutoKey" checked> Auto-key
+    </label>
+    <button id="btnAddKey" class="btn" title="Add a keyframe at the playhead (K)">+ Key</button>
+    <button id="btnDelKey" class="btn" title="Delete selected keyframe (Del)">- Key</button>
+
+    <label class="rng" title="Playback speed">
+      Speed
+      <select id="selSpeed">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+      </select>
+    </label>
+    <label class="rng" title="Timeline zoom">
+      Zoom
+      <input type="range" id="rngZoom" min="0.25" max="8" step="0.05" value="1">
+    </label>
+  </div>
+
+  <div class="timeline">
+    <div class="track-heads">
+      <div class="head-tools">
+        <button id="btnAddLayer" class="btn primary add-layer" title="Add a layer (Ctrl+N)">
+          + Add layer
+        </button>
+        <div class="head-tools-row">
+          <button id="btnDupLayer" class="btn small" title="Duplicate layer (Ctrl+D)">Dup</button>
+          <button id="btnDelLayer" class="btn small danger" title="Delete layer">Del</button>
+          <button id="btnEffects" class="btn small" title="Saved effects library">Effects</button>
+        </div>
+      </div>
+      <div id="heads" class="heads"></div>
+    </div>
+    <div class="track-area">
+      <canvas id="timelineCanvas"></canvas>
+      <div id="emptyState" class="empty-state hidden">
+        <h2>No layers yet</h2>
+        <p>A layer is one moving shape, one blinking group, or an imported show.
+           Stack a few and you have a light show.</p>
+        <div class="empty-actions">
+          <button id="emptyWizard" class="btn primary big">Build one step by step</button>
+          <button id="emptyPreset" class="btn big">Start from a preset</button>
+          <button id="emptyRandom" class="btn big">Add a random layer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- ------------------------------------------------ modal -->
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head"><span id="modalTitle">Title</span>
+      <button id="modalClose" class="btn icon">&times;</button></div>
+    <div id="modalBody" class="modal-body"></div>
+    <div id="modalFoot" class="modal-foot"></div>
+  </div>
+</div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

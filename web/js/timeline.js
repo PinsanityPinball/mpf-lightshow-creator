@@ -1,0 +1,451 @@
+// Canvas timeline: a clip per layer, keyframe diamonds on each clip, and a
+// scrubbable playhead. Replaces the original tool's "press P and hope".
+
+import { projectDuration, layerEndMs, invalidateKeys, makeKey, stateAt } from './project.js';
+
+const ROW_H = 30;
+const RULER_H = 26;
+const PAD_L = 8;
+const EDGE = 6;
+
+export class Timeline {
+  constructor(app, canvas, headsEl) {
+    this.app = app;
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.heads = headsEl;
+    this.w = 0;
+    this.h = 0;
+    this.scrollMs = 0;
+    this.scrollY = 0;
+    this.drag = null;
+    this.hover = null;
+
+    canvas.addEventListener('pointerdown', (e) => this.onDown(e));
+    canvas.addEventListener('pointermove', (e) => this.onMove(e));
+    window.addEventListener('pointerup', () => this.onUp());
+    canvas.addEventListener('dblclick', (e) => this.onDblClick(e));
+    canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+    headsEl.addEventListener('scroll', () => {
+      this.scrollY = headsEl.scrollTop;
+      this.draw();
+    });
+  }
+
+  fit() {
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.w = Math.max(100, Math.floor(rect.width));
+    this.h = Math.max(60, Math.floor(rect.height));
+    this.canvas.width = Math.round(this.w * dpr);
+    this.canvas.height = Math.round(this.h * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ------------------------------------------------------------ mapping
+
+  pxPerMs() {
+    const dur = Math.max(1, projectDuration(this.app.project));
+    return ((this.w - PAD_L * 2) / dur) * this.app.zoom;
+  }
+
+  msToX(ms) { return PAD_L + (ms - this.scrollMs) * this.pxPerMs(); }
+  xToMs(x) { return (x - PAD_L) / this.pxPerMs() + this.scrollMs; }
+
+  rowY(i) { return RULER_H + i * ROW_H - this.scrollY; }
+
+  rowAt(y) {
+    const i = Math.floor((y + this.scrollY - RULER_H) / ROW_H);
+    return (i >= 0 && i < this.app.project.layers.length) ? i : -1;
+  }
+
+  pointer(e) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  // ------------------------------------------------------------ hit tests
+
+  keyAt(layer, rowTop, x, y) {
+    if (Math.abs(y - (rowTop + ROW_H / 2)) > 10) return -1;
+    const dur = Math.max(1, layer.durationMs);
+    for (let i = 0; i < layer.keys.length; i++) {
+      const kx = this.msToX(layer.startMs + layer.keys[i].t * dur);
+      if (Math.abs(x - kx) <= 6) return i;
+    }
+    return -1;
+  }
+
+  // ------------------------------------------------------------ input
+
+  onDown(e) {
+    const { x, y } = this.pointer(e);
+    const app = this.app;
+    this.canvas.setPointerCapture(e.pointerId);
+
+    if (y < RULER_H) {
+      this.drag = { mode: 'scrub' };
+      app.setTime(this.xToMs(x));
+      return;
+    }
+
+    const row = this.rowAt(y);
+    if (row < 0) { app.selectLayer(null); app.requestDraw(); return; }
+
+    const layer = app.project.layers[row];
+    app.selectLayer(layer.id);
+    const rowTop = this.rowY(row);
+
+    const ki = this.keyAt(layer, rowTop, x, y);
+    if (ki >= 0) {
+      app.selectKey(ki);
+      app.pushUndo('move keyframe');
+      this.drag = { mode: 'key', layer, index: ki };
+      app.refreshInspector();
+      app.requestDraw();
+      return;
+    }
+
+    const x0 = this.msToX(layer.startMs);
+    const x1 = this.msToX(layerEndMs(layer));
+    if (x >= x0 - EDGE && x <= x1 + EDGE) {
+      app.pushUndo('move clip');
+      let mode = 'clip';
+      if (Math.abs(x - x0) <= EDGE) mode = 'clipL';
+      else if (Math.abs(x - x1) <= EDGE) mode = 'clipR';
+      this.drag = {
+        mode, layer,
+        grabMs: this.xToMs(x) - layer.startMs,
+        startMs: layer.startMs,
+        durationMs: layer.durationMs,
+      };
+      app.refreshInspector();
+      return;
+    }
+
+    // empty part of the row: scrub
+    this.drag = { mode: 'scrub' };
+    app.setTime(this.xToMs(x));
+  }
+
+  onMove(e) {
+    const { x, y } = this.pointer(e);
+    const app = this.app;
+    const d = this.drag;
+
+    if (!d) {
+      const row = this.rowAt(y);
+      let cursor = y < RULER_H ? 'ew-resize' : 'default';
+      if (row >= 0) {
+        const layer = app.project.layers[row];
+        const rowTop = this.rowY(row);
+        if (this.keyAt(layer, rowTop, x, y) >= 0) cursor = 'grab';
+        else {
+          const x0 = this.msToX(layer.startMs);
+          const x1 = this.msToX(layerEndMs(layer));
+          if (Math.abs(x - x0) <= EDGE || Math.abs(x - x1) <= EDGE) cursor = 'ew-resize';
+          else if (x > x0 && x < x1) cursor = 'move';
+        }
+      }
+      this.canvas.style.cursor = cursor;
+      return;
+    }
+
+    if (d.mode === 'scrub') {
+      app.setTime(this.xToMs(x));
+      return;
+    }
+
+    const layer = d.layer;
+    const snap = app.snapMs();
+
+    if (d.mode === 'key') {
+      const dur = Math.max(1, layer.durationMs);
+      let ms = this.xToMs(x) - layer.startMs;
+      if (!e.altKey) ms = Math.round(ms / snap) * snap;
+      const keys = layer.keys;
+      const t = Math.max(0, Math.min(1, ms / dur));
+      keys[d.index].t = t;
+      invalidateKeys(layer);
+    } else if (d.mode === 'clip') {
+      let ms = this.xToMs(x) - d.grabMs;
+      if (!e.altKey) ms = Math.round(ms / snap) * snap;
+      layer.startMs = Math.max(0, Math.round(ms));
+    } else if (d.mode === 'clipL') {
+      let ms = this.xToMs(x);
+      if (!e.altKey) ms = Math.round(ms / snap) * snap;
+      ms = Math.max(0, Math.min(ms, d.startMs + d.durationMs - snap));
+      const delta = ms - d.startMs;
+      layer.startMs = Math.round(ms);
+      layer.durationMs = Math.max(snap, Math.round(d.durationMs - delta));
+    } else if (d.mode === 'clipR') {
+      let ms = this.xToMs(x);
+      if (!e.altKey) ms = Math.round(ms / snap) * snap;
+      const reps = Math.max(1, layer.repeat || 1);
+      layer.durationMs = Math.max(snap, Math.round((ms - layer.startMs) / reps));
+    }
+
+    app.onProjectEdit({ light: true });
+  }
+
+  onUp() {
+    if (!this.drag) return;
+    const wasKey = this.drag.mode === 'key';
+    this.drag = null;
+    this.app.onProjectEdit({});
+    if (wasKey) this.app.refreshInspector();
+  }
+
+  onDblClick(e) {
+    const { x, y } = this.pointer(e);
+    const row = this.rowAt(y);
+    if (row < 0) return;
+    const app = this.app;
+    const layer = app.project.layers[row];
+    const rowTop = this.rowY(row);
+    if (this.keyAt(layer, rowTop, x, y) >= 0) return;
+    const dur = Math.max(1, layer.durationMs);
+    const t = Math.max(0, Math.min(1, (this.xToMs(x) - layer.startMs) / dur));
+    app.pushUndo('add keyframe');
+    const st = stateAt(layer, t);
+    layer.keys.push(makeKey(t, st));
+    layer.keys.sort((a, b) => a.t - b.t);
+    invalidateKeys(layer);
+    app.selectLayer(layer.id);
+    app.selectKey(layer.keys.findIndex((k) => k.t === t));
+    app.onProjectEdit({});
+    app.refreshInspector();
+  }
+
+  onWheel(e) {
+    e.preventDefault();
+    const app = this.app;
+    if (e.ctrlKey) {
+      const before = this.xToMs(this.pointer(e).x);
+      app.setZoom(app.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+      const after = this.xToMs(this.pointer(e).x);
+      this.scrollMs = Math.max(0, this.scrollMs + (before - after));
+      this.draw();
+    } else if (e.shiftKey) {
+      this.scrollMs = Math.max(0, this.scrollMs + e.deltaY / this.pxPerMs());
+      this.draw();
+    } else {
+      const max = Math.max(0, this.app.project.layers.length * ROW_H - (this.h - RULER_H));
+      this.scrollY = Math.max(0, Math.min(max, this.scrollY + e.deltaY));
+      this.heads.scrollTop = this.scrollY;
+      this.draw();
+    }
+  }
+
+  // ------------------------------------------------------------ drawing
+
+  draw() {
+    const ctx = this.ctx;
+    const app = this.app;
+    const { w, h } = this;
+    if (!w) return;
+
+    ctx.fillStyle = '#0f131a';
+    ctx.fillRect(0, 0, w, h);
+
+    const dur = projectDuration(app.project);
+    this.drawRuler(dur);
+
+    app.project.layers.forEach((layer, i) => {
+      const y = this.rowY(i);
+      if (y + ROW_H < RULER_H || y > h) return;
+      this.drawRow(layer, i, y);
+    });
+
+    // playhead
+    const px = this.msToX(app.timeMs);
+    ctx.save();
+    ctx.strokeStyle = '#ff6d5a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, h);
+    ctx.stroke();
+    ctx.fillStyle = '#ff6d5a';
+    ctx.beginPath();
+    ctx.moveTo(px - 5, 0); ctx.lineTo(px + 5, 0); ctx.lineTo(px, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  drawRuler(dur) {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#161c25';
+    ctx.fillRect(0, 0, this.w, RULER_H);
+    ctx.strokeStyle = '#2a3240';
+    ctx.beginPath();
+    ctx.moveTo(0, RULER_H - 0.5);
+    ctx.lineTo(this.w, RULER_H - 0.5);
+    ctx.stroke();
+
+    const ppm = this.pxPerMs();
+    const targetPx = 70;
+    const rawStep = targetPx / ppm;
+    const step = niceStep(rawStep);
+    const first = Math.floor(this.scrollMs / step) * step;
+    const last = this.xToMs(this.w);
+
+    ctx.font = '10px "Cascadia Mono", Consolas, monospace';
+    ctx.textBaseline = 'middle';
+    for (let ms = first; ms <= last; ms += step) {
+      const x = this.msToX(ms);
+      if (x < -40 || x > this.w + 40) continue;
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+      ctx.beginPath();
+      ctx.moveTo(Math.round(x) + 0.5, RULER_H - 7);
+      ctx.lineTo(Math.round(x) + 0.5, RULER_H);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.045)';
+      ctx.beginPath();
+      ctx.moveTo(Math.round(x) + 0.5, RULER_H);
+      ctx.lineTo(Math.round(x) + 0.5, this.h);
+      ctx.stroke();
+      ctx.fillStyle = '#7c889a';
+      ctx.fillText(ms >= 1000 ? (ms / 1000).toFixed(step >= 1000 ? 0 : 1) + 's' : ms + 'ms', x + 3, 9);
+    }
+
+    // end-of-show marker
+    const ex = this.msToX(dur);
+    ctx.strokeStyle = 'rgba(255,183,77,0.5)';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(ex, 0); ctx.lineTo(ex, this.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  drawRow(layer, index, y) {
+    const ctx = this.ctx;
+    const app = this.app;
+    const selected = app.selectedLayerId === layer.id;
+
+    if (index % 2 === 1) {
+      ctx.fillStyle = 'rgba(255,255,255,0.015)';
+      ctx.fillRect(0, y, this.w, ROW_H);
+    }
+    if (selected) {
+      ctx.fillStyle = 'rgba(79,195,247,0.07)';
+      ctx.fillRect(0, y, this.w, ROW_H);
+    }
+
+    const reps = Math.max(1, layer.repeat || 1);
+    const dur = Math.max(1, layer.durationMs);
+    const x0 = this.msToX(layer.startMs);
+    const x1 = this.msToX(layer.startMs + dur * reps);
+    const bw = Math.max(3, x1 - x0);
+    const by = y + 5;
+    const bh = ROW_H - 10;
+
+    const tint = layer.kind === 'pattern' && layer.pattern ? layer.pattern.color
+      : (layer.keys.length ? layer.keys[0].color : '#4fc3f7');
+    ctx.save();
+    ctx.globalAlpha = layer.enabled ? 1 : 0.35;
+
+    const grad = ctx.createLinearGradient(x0, 0, x1, 0);
+    grad.addColorStop(0, shade(tint, 0.55));
+    grad.addColorStop(1, shade(layer.kind === 'pattern' ? tint
+      : (layer.keys.length ? layer.keys[layer.keys.length - 1].color : tint), 0.35));
+    ctx.fillStyle = grad;
+    roundRect(ctx, x0, by, bw, bh, 4);
+    ctx.fill();
+
+    ctx.strokeStyle = selected ? '#8fd8ff' : 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = selected ? 1.5 : 1;
+    roundRect(ctx, x0, by, bw, bh, 4);
+    ctx.stroke();
+
+    // repeat dividers
+    if (reps > 1) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.lineWidth = 1;
+      for (let r = 1; r < reps; r++) {
+        const rx = this.msToX(layer.startMs + dur * r);
+        ctx.beginPath();
+        ctx.moveTo(rx, by); ctx.lineTo(rx, by + bh);
+        ctx.stroke();
+      }
+    }
+
+    // hold indicators
+    ctx.setLineDash([2, 3]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    if (layer.holdBefore && x0 > 0) {
+      ctx.beginPath();
+      ctx.moveTo(0, y + ROW_H / 2); ctx.lineTo(x0, y + ROW_H / 2);
+      ctx.stroke();
+    }
+    if (layer.holdAfter) {
+      ctx.beginPath();
+      ctx.moveTo(x1, y + ROW_H / 2); ctx.lineTo(this.w, y + ROW_H / 2);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // label
+    if (bw > 44) {
+      ctx.font = '11px "Segoe UI", sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.textBaseline = 'middle';
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0 + 3, by, bw - 6, bh);
+      ctx.clip();
+      ctx.fillText(layer.name, x0 + 7, y + ROW_H / 2);
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // keyframes
+    const cy = y + ROW_H / 2;
+    layer.keys.forEach((k, i) => {
+      const kx = this.msToX(layer.startMs + k.t * dur);
+      if (kx < -10 || kx > this.w + 10) return;
+      const sel = selected && i === app.selectedKeyIndex;
+      ctx.beginPath();
+      ctx.moveTo(kx, cy - 6); ctx.lineTo(kx + 6, cy);
+      ctx.lineTo(kx, cy + 6); ctx.lineTo(kx - 6, cy);
+      ctx.closePath();
+      ctx.fillStyle = sel ? '#ffb74d' : '#e9f4ff';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      if (k.ease === 'hold') {
+        ctx.fillStyle = '#0f131a';
+        ctx.fillRect(kx - 1.5, cy - 2, 3, 4);
+      }
+    });
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function shade(hex, k) {
+  const h = String(hex || '#4fc3f7').replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+  const r = Math.round((((n >> 16) & 255) * k) + 26);
+  const g = Math.round((((n >> 8) & 255) * k) + 30);
+  const b = Math.round(((n & 255) * k) + 38);
+  return `rgb(${Math.min(255, r)},${Math.min(255, g)},${Math.min(255, b)})`;
+}
+
+function niceStep(raw) {
+  const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000];
+  for (const s of steps) if (s >= raw) return s;
+  return 120000;
+}
