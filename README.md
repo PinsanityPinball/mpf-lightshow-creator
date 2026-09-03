@@ -57,6 +57,8 @@ shapes, a real timeline, light patterns and direct manipulation.
 - Identical consecutive frames merge, so a 0.5 s blink is 5 steps, not 75
 - **Import existing MPF shows** as layers and stack new work on top
 - `tools/check_show.py` validates output against MPF 0.80's real rules
+- **A self-test page** at `/selftest.html` that drives the app and looks for
+  controls that do nothing, presets that light nothing, NaNs and lost determinism
 
 **Working in it** — undo/redo on everything, save/load projects as JSON,
 keyboard shortcuts, and a Lights-only view showing exactly what the machine will

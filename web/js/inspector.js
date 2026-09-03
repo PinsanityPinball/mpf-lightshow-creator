@@ -6,7 +6,7 @@ import { LAYER_STEPS } from './steps.js';
 import { PRESET_COLOURS } from './presets.js';
 import { SHAPES, SHAPE_BY_ID, shapeDefaults } from './shapes.js';
 import {
-  EASE_NAMES, makeKey, invalidateKeys, projectDuration, frameCount, layerEndMs,
+  EASE_NAMES, makeKey, makePattern, invalidateKeys, projectDuration, frameCount, layerEndMs,
   layerFireTimes, setLayerStart,
   animateParam, unanimateParam, effectiveParams,
   setScaleRange, scaleRange, scaleIsUniform, fadeState, setFades,
@@ -965,7 +965,21 @@ export class Inspector {
       ['sweep', 'Sweep (tag group by group)'],
       ['interference', 'Interference (two waves beating)'],
       ['solid', 'Solid or pulsing (breathe, heartbeat)'],
-    ], (v) => edit('pattern type', () => { p.type = v; this.buildLayer(); }))));
+    ], (v) => edit('pattern type', () => {
+      // Several settings are shared between types and mean different things in
+      // each - `axis` is Wave's direction and Scanner's travel, `tailLen` is
+      // Rain's and Scanner's, `color2` is Stack's, Fire's and Plasma's. Keeping
+      // them across a type change silently carried the old value over, so a
+      // Scanner switched to Wave arrived travelling up the playfield instead of
+      // out from the centre. Start from the new type's own defaults and carry
+      // over only what identifies the layer rather than how it behaves.
+      const keep = {
+        color: p.color, colors: (p.colors || []).slice(), seed: p.seed,
+        tagOrder: (p.tagOrder || []).slice(),
+      };
+      layer.pattern = makePattern(Object.assign({ type: v }, keep));
+      this.buildLayer();
+    }))));
     const FIT_MEANS = {
       stack: 'one complete fill spanning the clip',
       chase: 'exactly one pass along the lights',

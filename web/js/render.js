@@ -1255,11 +1255,19 @@ export class ShowRenderer {
         const spin = rand() < 0.5 ? -1 : 1;
         if (g <= 0.001) {
           const ang = ((p.cometAngle || 35) * D2R) * flip + (spin < 0 ? Math.PI : 0);
-          const dist = u * speed * 3;
-          return {
-            x: fold(x0 + Math.cos(ang) * dist),
-            y: fold(y0 + Math.sin(ang) * dist * aspect),
+          // fold() mirrors with period 2, so travelling a whole even number of
+          // units on an axis lands exactly back where it started. Rounding the
+          // per-cycle travel to even numbers makes the wrap seamless; without
+          // it the cycle reset teleported the comet back onto its opening
+          // trajectory mid-flight - measured as a 0.31 jump in one frame where
+          // ordinary steps were 0.08.
+          const evenish = (v) => {
+            const n = Math.max(2, Math.round(Math.abs(v) / 2) * 2);
+            return v < 0 ? -n : n;
           };
+          const spanX = evenish(Math.cos(ang) * speed * 3);
+          const spanY = evenish(Math.sin(ang) * speed * 3 * aspect);
+          return { x: fold(x0 + spanX * u), y: fold(y0 + spanY * u) };
         }
         const v0 = speed * (0.8 + rand() * 0.4);
         const vx = flip * (0.4 + rand() * 0.8);

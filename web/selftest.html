@@ -1,0 +1,746 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Show Creator self-test</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 16px 20px; background: #0c0f13; color: #dfe6ee;
+    font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  .sub { color: #7e8b99; margin-bottom: 14px; }
+  button {
+    background: #16303c; border: 1px solid #2b7d99; color: #cdefff;
+    border-radius: 5px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  #summary { margin: 14px 0; font-size: 15px; font-weight: 600; }
+  .ok { color: #7fd77f; }
+  .bad { color: #ff8a8a; }
+  .warn { color: #ffd479; }
+  section { margin: 16px 0; border-top: 1px solid #1e242c; padding-top: 10px; }
+  section > h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+    color: #7e8b99; margin: 0 0 6px; }
+  .row { display: grid; grid-template-columns: 62px 1fr; gap: 2px 10px; align-items: baseline; }
+  .row > .tag { font-size: 11px; font-weight: 600; }
+  .row > .what { color: #b9c4d0; }
+  .row > .what small { color: #7e8b99; }
+  pre { margin: 4px 0 0; color: #7e8b99; font-size: 11.5px; white-space: pre-wrap; }
+  iframe { position: fixed; left: -3000px; width: 1200px; height: 900px; border: 0; }
+</style>
+
+<h1>Show Creator self-test</h1>
+<div class="sub">
+  Drives the real app in a hidden frame. Looks for controls that do not affect
+  the output, presets that disagree with their defaults, gaps between the wizard
+  and the Layer panel, and anything that renders a NaN.
+</div>
+<button id="run">Run all checks</button>
+<div id="summary"></div>
+<div id="out"></div>
+<iframe id="frame" src="/"></iframe>
+
+<script type="module">
+import {
+  makePattern, makePatternLayer, makeLayer, makeKey, normaliseProject,
+  serialiseProject, invalidateKeys, EASES,
+} from './js/project.js';
+import { PRESETS, PRESET_COLOURS, GROUP_ORDER } from './js/presets.js';
+import { SHAPES } from './js/shapes.js';
+import { PATHS } from './js/paths.js';
+
+const $ = (s) => document.querySelector(s);
+const out = $('#out');
+let pass = 0, fail = 0, warn = 0;
+
+function section(title) {
+  const s = document.createElement('section');
+  s.innerHTML = `<h2>${title}</h2>`;
+  out.appendChild(s);
+  return s;
+}
+function line(sec, kind, what, detail) {
+  if (kind === 'PASS') pass++; else if (kind === 'FAIL') fail++; else warn++;
+  const row = document.createElement('div');
+  row.className = 'row';
+  const cls = kind === 'PASS' ? 'ok' : (kind === 'FAIL' ? 'bad' : 'warn');
+  row.innerHTML = `<span class="tag ${cls}">${kind}</span><span class="what">${what}</span>`;
+  if (detail) {
+    const p = document.createElement('pre');
+    p.textContent = detail;
+    row.appendChild(document.createElement('span'));
+    row.appendChild(p);
+  }
+  sec.appendChild(row);
+}
+
+/** Wait for the app in the frame to finish booting. */
+function waitForApp() {
+  return new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    const tick = () => {
+      const w = $('#frame').contentWindow;
+      if (w && w.app && w.app.renderer && w.app.lights) return resolve(w.app);
+      if (Date.now() - t0 > 20000) return reject(new Error('the app did not start'));
+      setTimeout(tick, 150);
+    };
+    tick();
+  });
+}
+
+/** A synthetic grid, so checks do not depend on which map happens to be loaded. */
+function gridLights(cols = 12, rows = 24) {
+  const out = [];
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      out.push({
+        // x is jittered per row so that name-order and x-order are not the
+        // same sequence. They were, which made the chase/marquee "order" check
+        // report a failure that did not exist.
+        name: `g_${i}_${j}`,
+        x: Math.min(0.99, Math.max(0.01, (i + 0.5) / cols + ((j % 5) - 2) * 0.012)),
+        y: (j + 0.5) / rows,
+        tags: ['all', i < cols / 2 ? 'left' : 'right', j < rows / 2 ? 'top' : 'bottom',
+          (i + j) % 2 ? 'odd' : 'even'],
+      });
+    }
+  }
+  return out;
+}
+
+const sig = (app, layers, lights, t) => {
+  const c = app.renderer.render({ ...app.project, layers, durationMs: 0 }, lights, t);
+  let h = 0;
+  for (let i = 0; i < c.length; i++) h = (h * 31 + c[i]) | 0;
+  return h;
+};
+const anyNaN = (app, layers, lights, t) => {
+  const c = app.renderer.render({ ...app.project, layers, durationMs: 0 }, lights, t);
+  for (let i = 0; i < c.length; i++) if (!Number.isFinite(c[i])) return true;
+  return false;
+};
+const litCount = (app, layers, lights, t) => {
+  const c = app.renderer.render({ ...app.project, layers, durationMs: 0 }, lights, t);
+  let n = 0;
+  for (let i = 0; i < lights.length; i++) {
+    const o = i * 3;
+    if (c[o] + c[o + 1] + c[o + 2] > 10) n++;
+  }
+  return n;
+};
+
+// ---------------------------------------------------------------------------
+// The spec: which settings each pattern is supposed to respond to.
+//
+// If a setting is listed here and changing it does not change a single pixel at
+// any sampled time, the control is inert - which is the single most common bug
+// this app has had. Enum values are listed so the check has something to switch
+// to; numbers and booleans are perturbed automatically.
+// ---------------------------------------------------------------------------
+const ENUMS = {
+  axis: ['radial', 'y', 'x'],
+  order: ['name', 'x', 'y', 'angle'],
+  fillOrder: ['bottom-up', 'top-down', 'left-right', 'right-left'],
+  fillMode: ['fill', 'wipe'],
+  offMode: ['dark', 'colour'],
+  pulseShape: ['steady', 'breathe', 'heartbeat', 'triangle', 'ramp-up', 'ramp-down'],
+  spreadFrom: ['centre', 'bottom', 'top', 'left', 'right'],
+  color: ['#ff2020', '#20ff40'],
+  color2: ['#2060ff', '#ffcc00'],
+  offColor: ['#000000', '#404040'],
+  waveColor2: ['', '#2060ff'],
+};
+
+// Each entry is a setting name, or {k, base, to, dur} when a bare perturbation
+// would not actually change anything:
+//   base - extra pattern fields needed for the setting to be live at all
+//   to   - the value to switch to, when the automatic guess is a no-op
+//   dur  - a clip length that makes the setting matter (Fit needs one that is
+//          not equal to the pattern's own period)
+//
+// Getting these right matters. The first version of this file reported sixteen
+// failures and every single one was the test's own fault: a grid where
+// name-order and x-order happen to be identical, an off-colour defaulting to
+// black so switching to it looks like staying dark, a depth that clamps at the
+// value it already had, periods equal to the clip length so Fit changed
+// nothing, and a sweep with no tag groups, which lights nothing whatever you
+// set. A check that cannot fail for the right reason is worse than no check.
+const SPEC = {
+  blink: ['color', 'onMs', 'offMs', 'pulseShape',
+    { k: 'offMode', base: { offColor: '#3040ff' }, to: 'colour' },
+    { k: 'offColor', base: { offMode: 'colour' }, to: '#30ff90' },
+    { k: 'pulseMs', base: { pulseShape: 'breathe' } },
+    { k: 'pulseDepth', base: { pulseShape: 'breathe' }, to: 0.35 }],
+  solid: ['color', 'pulseShape',
+    { k: 'pulseMs', base: { pulseShape: 'breathe' } },
+    { k: 'pulseDepth', base: { pulseShape: 'breathe' }, to: 0.35 }],
+  chase: ['color', 'width', 'tail', 'reverse',
+    { k: 'stepMs', base: { fit: false } },
+    { k: 'order', to: 'angle' },
+    { k: 'fit', dur: 5000 }],
+  marquee: ['color', 'every', 'reverse',
+    { k: 'marqueeMs', base: { fit: false } },
+    { k: 'order', to: 'angle' },
+    { k: 'offMode', base: { offColor: '#3040ff' }, to: 'colour' },
+    { k: 'fit', dur: 5000 }],
+  sparkle: ['count', 'life', 'decay', 'seed', 'colors'],
+  wavy: ['color', 'wavelength', 'sharpness', 'reverse',
+    { k: 'axis', to: 'y' },
+    { k: 'periodMs', base: { fit: false } },
+    { k: 'floorLevel', to: 0.5 },
+    { k: 'waveColor2', base: { floorLevel: 0.5 }, to: '#30ff90' },
+    { k: 'fit', dur: 5000 }],
+  stack: ['color', 'color2', 'cols', 'rows', 'fillOrder', 'fillMode', 'drop', 'reverse',
+    { k: 'fillMs', base: { fit: false } },
+    { k: 'dropTrail', base: { drop: true }, to: 0.2 },
+    { k: 'fit', dur: 5000 }],
+  fire: ['color', 'color2', 'fireHeat', 'fireJitter', 'fireMs', 'seed'],
+  pinwheel: ['color', 'arms', 'armWidth', 'reverse',
+    { k: 'spinMs', base: { fit: false } },
+    { k: 'fit', dur: 5000 }],
+  scanner: ['color', 'bandWidth', 'tailLen', 'bounce', 'reverse',
+    { k: 'axis', to: 'x' },
+    { k: 'sweepMs', base: { fit: false } },
+    { k: 'fit', dur: 5000 }],
+  rain: ['color', 'drops', 'tailLen', 'seed', 'reverse',
+    { k: 'dropMs', base: { fit: false } },
+    { k: 'fit', dur: 5000 }],
+  plasma: ['color', 'color2', 'plasmaScale',
+    { k: 'plasmaMs', base: { fit: false } },
+    { k: 'fit', dur: 5000 }],
+  contagion: ['color', 'spreadFrom', 'spreadRadius', 'spreadHold', 'reverse',
+    { k: 'spreadMs', base: { fit: false } },
+    { k: 'spreadTrail', base: { spreadHold: false }, to: 1.4 },
+    { k: 'fit', dur: 5000 }],
+  comet: ['color', 'comets', 'launchSpeed', 'gravity', 'cometWidth', 'cometTrail', 'seed',
+    { k: 'cometMs', base: { fit: false } },
+    { k: 'fit', dur: 5000 }],
+  interference: ['color', 'wavelength', 'wavelength2', 'reverse',
+    { k: 'axis', to: 'y' },
+    { k: 'periodMs', base: { fit: false } },
+    { k: 'fit', dur: 5000 }],
+  // sweep lights nothing at all without groups, so every entry needs them
+  sweep: [
+    { k: 'color', base: { tagOrder: ['left', 'right', 'top'] } },
+    { k: 'crossfade', base: { tagOrder: ['left', 'right', 'top'] }, to: 0.85 },
+    { k: 'sweepHold', base: { tagOrder: ['left', 'right', 'top'] } },
+    { k: 'reverse', base: { tagOrder: ['left', 'right', 'top'] } },
+    { k: 'dwellMs', base: { tagOrder: ['left', 'right', 'top'], fit: false } },
+    { k: 'fit', base: { tagOrder: ['left', 'right', 'top'] }, dur: 5000 }],
+};
+
+/** A different value for a setting, when the spec does not name one. */
+function perturb(value, key) {
+  if (ENUMS[key]) {
+    const list = ENUMS[key];
+    const i = list.findIndex((v) => v === value);
+    return list[(i + 1 + list.length) % list.length];
+  }
+  if (typeof value === 'boolean') return !value;
+  if (typeof value === 'number') return value === 0 ? 0.5 : value * 1.9 + 0.17;
+  if (Array.isArray(value)) return ['#ff00ff', '#00ffcc'];
+  return value;
+}
+
+const TIMES = [0, 137, 301, 599, 907, 1303, 1801, 2503];
+
+// ---------------------------------------------------------------------------
+async function runAll() {
+  $('#run').disabled = true;
+  out.innerHTML = '';
+  pass = fail = warn = 0;
+  let app;
+  try {
+    app = await waitForApp();
+  } catch (e) {
+    const s = section('startup');
+    line(s, 'FAIL', 'could not reach the app in the frame', e.message);
+    summarise();
+    return;
+  }
+
+  const grid = gridLights();
+  const real = app.lights && app.lights.length > 20 ? app.lights : grid;
+
+  // One check that hangs must not cost you the other seven.
+  const guarded = async (name, fn, ms = 45000) => {
+    let timer;
+    const bail = new Promise((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`gave up after ${ms / 1000}s`)), ms);
+    });
+    try {
+      await Promise.race([fn(), bail]);
+    } catch (e) {
+      line(section(`${name} (did not finish)`), 'WARN', name + ' stopped early', e.message);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  await guarded('inert settings', () => checkInertSettings(app, grid));
+  await guarded('panel controls', () => checkPanelControls(app));
+  await guarded('presets', () => checkPresets(app, real));
+  await guarded('wizard parity', () => checkWizardParity(app), 25000);
+  await guarded('render health', () => checkRenderHealth(app, grid));
+  await guarded('determinism', () => checkDeterminism(app, grid));
+  await guarded('panels build', () => checkPanes(app));
+  await guarded('export', () => checkExport(app, real));
+
+  summarise();
+  $('#run').disabled = false;
+}
+
+function summarise() {
+  const el = $('#summary');
+  const cls = fail ? 'bad' : (warn ? 'warn' : 'ok');
+  el.className = cls;
+  el.textContent = `${pass} passed, ${fail} failed, ${warn} to look at`;
+}
+
+// --- 1. does every setting in the spec actually change the output? ----------
+async function checkInertSettings(app, lights) {
+  const s = section('1. settings that do nothing');
+  for (const [type, keys] of Object.entries(SPEC)) {
+    const inert = [];
+    for (const entry of keys) {
+      const cfg = typeof entry === 'string' ? { k: entry } : entry;
+      const key = cfg.k;
+      const dur = cfg.dur || 2000;
+      const base = Object.assign({ type, color: '#ff2020' }, cfg.base || {});
+      const before = makePatternLayer({ name: type, durationMs: dur, pattern: { ...base } });
+      if (!(key in before.pattern)) { inert.push(key + ' (not in the model)'); continue; }
+
+      const next = 'to' in cfg ? cfg.to : perturb(before.pattern[key], key);
+      if (JSON.stringify(next) === JSON.stringify(before.pattern[key])) {
+        inert.push(key + ' (the test could not change it)');
+        continue;
+      }
+      const after = makePatternLayer({ name: type, durationMs: dur,
+        pattern: Object.assign({}, base, { [key]: next }) });
+
+      // if nothing is lit at all, "no difference" tells us nothing
+      let anyLight = false;
+      for (const t of TIMES) if (litCount(app, [before], lights, t)) { anyLight = true; break; }
+      if (!anyLight) { inert.push(key + ' (nothing lit, cannot tell)'); continue; }
+
+      let differs = false;
+      for (const t of TIMES) {
+        if (sig(app, [before], lights, t) !== sig(app, [after], lights, t)) { differs = true; break; }
+      }
+      if (!differs) inert.push(key);
+    }
+    if (inert.length) {
+      line(s, 'FAIL', `<b>${type}</b> ignores ${inert.length} setting(s)`, inert.join(', '));
+    } else {
+      line(s, 'PASS', `${type} responds to all ${keys.length} of its settings`);
+    }
+  }
+
+  // easing has to shape a pattern's progress, not just its brightness
+  const easeInert = [];
+  for (const type of ['stack', 'contagion', 'sweep', 'chase', 'scanner', 'rain',
+    'comet', 'pinwheel', 'wavy', 'interference']) {
+    const mk = (ease) => {
+      const L = makePatternLayer({ name: type, durationMs: 2400,
+        pattern: { type, color: '#ff2020', tagOrder: ['left', 'right', 'top'] } });
+      for (const k of L.keys) k.ease = ease;
+      return L;
+    };
+    let differs = false;
+    for (const t of TIMES) {
+      if (sig(app, [mk('linear')], lights, t) !== sig(app, [mk('expo-in')], lights, t)) {
+        differs = true; break;
+      }
+    }
+    if (!differs) easeInert.push(type);
+  }
+  if (easeInert.length) line(s, 'FAIL', 'easing does nothing to these patterns', easeInert.join(', '));
+  else line(s, 'PASS', 'easing shapes the progress of all 10 patterns that should use it');
+}
+
+// --- 2. does every panel control write to the model? -----------------------
+async function checkPanelControls(app) {
+  const s = section('2. panel controls wired to the model');
+  const doc = $('#frame').contentDocument;
+  const insp = app.inspector;
+
+  const snapshot = (l) => JSON.stringify(serialiseProject(l));
+  const types = Object.keys(SPEC);
+  const dead = [];
+  let tested = 0;
+
+  for (const type of types) {
+    const L = makePatternLayer({ name: type, durationMs: 2000,
+      pattern: { type, color: '#ff2020', tagOrder: ['left', 'right'] } });
+    app.project.layers = [L];
+    app.selectedLayerId = L.id;
+    app.selectedKeyIndex = 0;
+    insp.layerTab = 'pattern';
+    insp.refresh();
+    await new Promise((r) => setTimeout(r, 40));
+
+    const panel = doc.getElementById('panelLayer');
+    if (!panel) { line(s, 'FAIL', 'no #panelLayer in the frame'); return; }
+    const seen = new Set();
+    let controls = [...panel.querySelectorAll('input, select')];
+    for (const c of controls) {
+      const id = (c.closest('.row, .btn-row, .field') || c).textContent + '|' + c.type;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      // the type selector is what puts us here; changing it is not under test
+      if (c.tagName === 'SELECT' && [...c.options].some((o) => o.value === 'contagion')) continue;
+      if (c.type === 'text' || c.tagName === 'TEXTAREA') continue;   // free text, checked elsewhere
+      const label = (c.closest('.row, .btn-row, .field') || c.parentElement || {}).textContent || c.type;
+      const before = snapshot(app.project.layers[0]);
+      try {
+        if (c.type === 'checkbox') { c.checked = !c.checked; c.dispatchEvent(new Event('change', { bubbles: true })); }
+        else if (c.tagName === 'SELECT') {
+          const other = [...c.options].find((o) => o.value !== c.value);
+          if (!other) continue;
+          c.value = other.value; c.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (c.type === 'range' || c.type === 'number') {
+          const v = Number(c.value);
+          const step = Number(c.step) || 1;
+          const max = c.max === '' ? v + step * 4 : Number(c.max);
+          const min = c.min === '' ? v - step * 4 : Number(c.min);
+          const next = v + step * 3 <= max ? v + step * 3 : Math.max(min, v - step * 3);
+          if (next === v) continue;
+          c.value = String(next);
+          c.dispatchEvent(new Event('input', { bubbles: true }));
+          c.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (c.type === 'color') {
+          c.value = '#00ff88'; c.dispatchEvent(new Event('input', { bubbles: true }));
+        } else continue;
+      } catch (e) { /* keep going */ }
+      tested++;
+      if (snapshot(app.project.layers[0]) === before) {
+        dead.push(`${type}: ${label.trim().slice(0, 34)}`);
+      }
+      // A control that rebuilds the panel invalidates the rest of this list, so
+      // rebuild and restart from the top for this type rather than poking stale
+      // nodes. Cheap because it only happens for the controls that do rebuild.
+      if (!panel.contains(c)) break;
+    }
+  }
+  if (dead.length) line(s, 'FAIL', `${dead.length} of ${tested} controls changed nothing`, dead.join('\n'));
+  else line(s, 'PASS', `all ${tested} pattern-panel controls write to the model`);
+}
+
+// --- 3. presets vs the defaults they are built on --------------------------
+async function checkPresets(app, lights) {
+  const s = section('3. presets');
+  const bad = [];
+  const overrides = [];
+  for (const p of PRESETS) {
+    let L;
+    try {
+      L = p.build(PRESET_COLOURS[0], { lights, tags: app.tags, aspect: 0.5 });
+    } catch (e) { bad.push(`${p.id}: threw ${e.message}`); continue; }
+    if (!L || !L.name) { bad.push(`${p.id}: built nothing`); continue; }
+    // it has to light something somewhere in its own clip
+    const span = Math.max(1, L.durationMs) * Math.max(1, L.repeat || 1);
+    let litSomewhere = 0;
+    for (const f of [0.05, 0.2, 0.4, 0.6, 0.8, 0.95]) {
+      litSomewhere = Math.max(litSomewhere, litCount(app, [L], lights, span * f));
+    }
+    if (!litSomewhere) bad.push(`${p.id}: lights nothing at any point in its clip`);
+    if (anyNaN(app, [L], lights, span * 0.3)) bad.push(`${p.id}: renders a NaN`);
+    // and note where it disagrees with the pattern defaults
+    if (L.kind === 'pattern') {
+      const def = makePattern({ type: L.pattern.type });
+      for (const k of Object.keys(L.pattern)) {
+        if (k === 'type') continue;
+        if (JSON.stringify(L.pattern[k]) !== JSON.stringify(def[k])) {
+          overrides.push(`${p.id}.${k}: ${JSON.stringify(def[k])} -> ${JSON.stringify(L.pattern[k])}`);
+        }
+      }
+    }
+    // a rainbow preset has no colour to apply, so ignoring the argument is fine
+    if (!p.build.length && !/rainbow/i.test(p.id + p.name)) {
+      bad.push(`${p.id}: build() ignores its arguments`);
+    }
+  }
+  if (bad.length) line(s, 'FAIL', `${bad.length} preset problem(s)`, bad.join('\n'));
+  else line(s, 'PASS', `all ${PRESETS.length} presets build and light something`);
+
+  const missing = [...new Set(PRESETS.map((p) => p.group))].filter((g) => !GROUP_ORDER.includes(g));
+  if (missing.length) line(s, 'FAIL', 'preset groups missing from GROUP_ORDER', missing.join(', '));
+  else line(s, 'PASS', 'every preset group is placed in GROUP_ORDER');
+
+  const noPath = PATHS.filter((p) => p.id !== 'none')
+    .filter((p) => !PRESETS.some((x) => x.id === 'path-' + p.id));
+  if (noPath.length) line(s, 'WARN', 'paths with no preset', noPath.map((p) => p.id).join(', '));
+  else line(s, 'PASS', 'every motion path has a preset');
+
+  if (overrides.length) {
+    line(s, 'WARN', `${overrides.length} preset override(s) - check none contradict a default you meant`,
+      overrides.join('\n'));
+  }
+}
+
+// --- 4. wizard steps vs Layer panel panes ----------------------------------
+async function checkWizardParity(app) {
+  const s = section('4. wizard and panel offer the same things');
+  const doc = $('#frame').contentDocument;
+  const win = $('#frame').contentWindow;
+
+  // Compare what each surface actually RENDERS, not what the source says.
+  // Scraping the source could not see a label passed as a variable, and it
+  // called "Tween through" and "Tween in" different controls - three of its
+  // four failures were its own wording problem, not a missing feature.
+  const CONCEPTS = [
+    ['a shape to draw', /\b(bar|circle|triangle|square|star|shape)\b/],
+    ['shape size', /\b(size|scale|width|height)\b/],
+    ['a motion path', /\b(circle|spiral|zig|bounce|path|sweep up)\b/],
+    ['path size', /\bsize\b/],
+    ['off-playfield margin', /\b(off-screen|margin|overshoot)\b/],
+    ['which way it faces', /\b(orientation|angle|rotat|turn)\b/],
+    ['how far it spins', /\b(rotation|turn|spin)\b/],
+    ['easing', /\b(easing|ease|curve)\b/],
+    ['a colour', /\b(colour|color)\b/],
+    ['a second colour', /\b(end colour|second|gradient|to colour)\b/],
+    ['colour tweening', /\btween\b/],
+    ['fade in or out', /\bfade\b/],
+    ['which lights', /\b(lights|tags|every light)\b/],
+    ['tag matching', /\b(match|any|all)\b/],
+    ['inverting the selection', /\binvert\b/],
+    ['start time', /\bstart\b/],
+    ['clip length', /\b(length|duration)\b/],
+    ['repeats', /\brepeat\b/],
+    ['ping-pong', /\bping/],
+    ['blend mode', /\bblend\b/],
+    ['sample rate', /\b(sample rate|hz)\b/],
+  ];
+
+  const textOf = (root) => (root ? (root.textContent || '').toLowerCase() : '');
+
+  // --- everything the Layer panel shows, across all its sub-tabs
+  const L = makeLayer({ name: 'parity', shapeId: 'bar', durationMs: 1000 });
+  app.project.layers = [L];
+  app.selectedLayerId = L.id;
+  app.selectedKeyIndex = 0;
+  app.inspector.refresh();
+  await new Promise((r) => setTimeout(r, 60));
+  let panelText = '';
+  for (const tab of [...doc.querySelectorAll('#panelLayer .subtab')]) {
+    tab.click();
+    await new Promise((r) => setTimeout(r, 30));
+    // open any folds so their contents count
+    for (const t of [...doc.querySelectorAll('#panelLayer .wiz-adv')]) t.click();
+    await new Promise((r) => setTimeout(r, 20));
+    panelText += ' ' + textOf(doc.getElementById('panelLayer'));
+  }
+  // a path has to be chosen before its settings exist
+  const pathTab = [...doc.querySelectorAll('#panelLayer .subtab')].find((t) => t.textContent === 'Path');
+  if (pathTab) {
+    pathTab.click();
+    await new Promise((r) => setTimeout(r, 30));
+    const spiral = [...doc.querySelectorAll('#panelLayer button')].find((x) => x.textContent === 'Spiral');
+    if (spiral) { spiral.click(); await new Promise((r) => setTimeout(r, 60)); }
+    panelText += ' ' + textOf(doc.getElementById('panelLayer'));
+  }
+
+  // --- everything the wizard shows, across all its steps
+  let wizText = '';
+  try {
+    app.openWizard();
+    await new Promise((r) => setTimeout(r, 200));
+    // pause the preview first: its animation loop repaints while we click
+    if (app.wizard && app.wizard.setPlaying) app.wizard.setPlaying(false);
+    const crumbCount = doc.querySelectorAll('#wizard .wiz-crumb').length;
+    for (let i = 0; i < crumbCount; i++) {
+      const c = doc.querySelectorAll('#wizard .wiz-crumb')[i];
+      if (!c) break;
+      c.click();
+      await new Promise((r) => setTimeout(r, 30));
+      const adv = doc.querySelector('#wizard .wiz-adv');
+      if (adv) { adv.click(); await new Promise((r) => setTimeout(r, 20)); }
+      wizText += ' ' + textOf(doc.querySelector('#wizard .wiz-body'));
+    }
+    if (app.wizard) app.wizard.close();
+  } catch (e) {
+    line(s, 'WARN', 'could not drive the wizard', e.message);
+    return;
+  }
+
+  const missing = [];
+  for (const [what, re] of CONCEPTS) {
+    const inWiz = re.test(wizText);
+    const inPanel = re.test(panelText);
+    if (inWiz && !inPanel) missing.push(what);
+  }
+  if (missing.length) {
+    line(s, 'FAIL', `${missing.length} thing(s) the wizard offers and the panel does not`,
+      missing.join('\n'));
+  } else {
+    line(s, 'PASS', `all ${CONCEPTS.length} things the wizard offers are reachable in the panel`);
+  }
+
+  // and the step lists themselves must still agree
+  const steps = [...doc.querySelectorAll('#wizard .wiz-crumb')].map((c) =>
+    c.textContent.replace(/^\d+\.\s*/, ''));
+  app.inspector.refresh();
+  await new Promise((r) => setTimeout(r, 40));
+  const tabs = [...doc.querySelectorAll('#panelLayer .subtab')].map((t) => t.textContent);
+  if (steps.length && JSON.stringify(steps) !== JSON.stringify(tabs)) {
+    line(s, 'FAIL', 'the wizard steps and the panel tabs are not the same list',
+      `wizard: ${steps.join(', ')}\npanel:  ${tabs.join(', ')}`);
+  } else if (steps.length) {
+    line(s, 'PASS', 'the wizard steps and the panel tabs are the same list, in the same order');
+  }
+}
+
+// --- 5. nothing renders a NaN, under any combination -----------------------
+async function checkRenderHealth(app, lights) {
+  const s = section('5. render health');
+  const bad = [];
+  for (const type of Object.keys(SPEC)) {
+    for (const blend of ['add', 'normal', 'average', 'erase']) {
+      for (const reverse of [false, true]) {
+        const L = makePatternLayer({ name: type, durationMs: 1500, blend,
+          pattern: { type, color: '#ff2020', reverse, tagOrder: ['left', 'right'] } });
+        for (const t of [0, 400, 900, 1499]) {
+          if (anyNaN(app, [L], lights, t)) { bad.push(`${type}/${blend}/rev=${reverse}`); break; }
+        }
+      }
+    }
+  }
+  for (const sh of SHAPES) {
+    const L = makeLayer({ name: sh.id, shapeId: sh.id, durationMs: 1000 });
+    if (anyNaN(app, [L], lights, 500)) bad.push('shape ' + sh.id);
+  }
+  // degenerate values people can actually reach
+  const DEGEN = [{ durationMs: 0 }, { repeat: 0 }];
+  const DEGEN_P = [{ cols: 0, rows: 0 }, { seeds: 0 }, { comets: 0 }, { every: 0 },
+    { spreadRadius: 0 }, { tagOrder: [] }, { wavelength: 0, wavelength2: 0 },
+    { count: 0 }, { drops: 0 }, { pulseMs: 0 }, { arms: 0 }];
+  for (const type of Object.keys(SPEC)) {
+    for (const d of DEGEN) for (const dp of DEGEN_P) {
+      const L = makePatternLayer({ name: type, ...d,
+        pattern: { type, color: '#ff2020', ...dp } });
+      if (anyNaN(app, [L], lights, 0) || anyNaN(app, [L], lights, 250)) {
+        bad.push(`${type} degenerate ${JSON.stringify({ ...d, ...dp })}`);
+      }
+    }
+  }
+  // one light, and every light on the same spot
+  const ONE = [{ name: 'a', x: 0.5, y: 0.5, tags: ['all'] }];
+  const SAME = [0, 1, 2].map((i) => ({ name: 'x' + i, x: 0.4, y: 0.4, tags: ['all'] }));
+  for (const type of Object.keys(SPEC)) {
+    for (const set of [ONE, SAME, []]) {
+      const L = makePatternLayer({ name: type, durationMs: 1000, pattern: { type, color: '#f20' } });
+      if (set.length && anyNaN(app, [L], set, 300)) bad.push(`${type} with ${set.length} light(s)`);
+    }
+  }
+  if (bad.length) line(s, 'FAIL', `${bad.length} combination(s) produced a non-finite value`,
+    [...new Set(bad)].join('\n'));
+  else line(s, 'PASS', 'no NaN across patterns x blends x reverse, all shapes, degenerate values and tiny maps');
+
+  for (const e of Object.keys(EASES)) {
+    const L = makePatternLayer({ name: 'stack', durationMs: 2000, pattern: { type: 'stack', color: '#f20' } });
+    for (const k of L.keys) k.ease = e;
+    if (anyNaN(app, [L], lights, 900)) { line(s, 'FAIL', `easing ${e} produced a NaN`); return; }
+  }
+  line(s, 'PASS', `all ${Object.keys(EASES).length} easing curves render cleanly`);
+}
+
+// --- 6. the same input must always give the same output --------------------
+async function checkDeterminism(app, lights) {
+  const s = section('6. determinism');
+  const bad = [];
+  for (const type of Object.keys(SPEC)) {
+    const L = makePatternLayer({ name: type, durationMs: 3000, seedKey: 'fixed',
+      pattern: { type, color: '#ff2020', tagOrder: ['left', 'right'] } });
+    const a1 = sig(app, [L], lights, 1100);
+    sig(app, [L], lights, 2700);                                  // intervening render
+    sig(app, [makePatternLayer({ name: 'x', pattern: { type: 'plasma' } })], lights, 400);
+    if (sig(app, [L], lights, 1100) !== a1) bad.push(type + ': changed on re-render');
+    const round = normaliseProject({ layers: [serialiseProject(L)] }).layers[0];
+    if (sig(app, [round], lights, 1100) !== a1) bad.push(type + ': changed after save/reload');
+  }
+  if (bad.length) line(s, 'FAIL', 'output is not reproducible', bad.join('\n'));
+  else line(s, 'PASS', 'every pattern reproduces exactly on re-render and after a save/reload');
+}
+
+// --- 7. every panel pane builds, for every layer kind ---------------------
+async function checkPanes(app) {
+  const s = section('7. panels build');
+  const doc = $('#frame').contentDocument;
+  const insp = app.inspector;
+  const bad = [];
+  const kinds = {
+    shape: makeLayer({ name: 's', shapeId: 'bar', durationMs: 1000 }),
+    pattern: makePatternLayer({ name: 'p', durationMs: 1000 }),
+  };
+  for (const [kind, L] of Object.entries(kinds)) {
+    app.project.layers = [L];
+    app.selectedLayerId = L.id;
+    app.selectedKeyIndex = 0;
+    insp.refresh();
+    await new Promise((r) => setTimeout(r, 40));
+    const tabs = [...doc.querySelectorAll('#panelLayer .subtab')];
+    if (!tabs.length) { bad.push(`${kind}: no sub-tabs`); continue; }
+    for (const t of tabs) {
+      t.click();
+      await new Promise((r) => setTimeout(r, 25));
+      const pane = doc.querySelector('#panelLayer .subpane');
+      if (!pane || pane.children.length === 0) bad.push(`${kind}/${t.textContent}: empty`);
+    }
+  }
+  // every pattern type's controls
+  for (const type of Object.keys(SPEC)) {
+    const L = makePatternLayer({ name: type, durationMs: 1000, pattern: { type } });
+    app.project.layers = [L]; app.selectedLayerId = L.id;
+    insp.layerTab = 'pattern'; insp.refresh();
+    await new Promise((r) => setTimeout(r, 25));
+    const pane = doc.querySelector('#panelLayer .subpane');
+    if (!pane || pane.children.length < 3) bad.push(`pattern ${type}: thin panel`);
+  }
+  for (const name of ['Layer', 'Keyframe', 'Show', 'Export']) {
+    const tab = [...doc.querySelectorAll('.tab')].find((x) => x.textContent.trim() === name);
+    if (!tab) { bad.push('missing top tab ' + name); continue; }
+    tab.click();
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  if (bad.length) line(s, 'FAIL', `${bad.length} panel problem(s)`, bad.join('\n'));
+  else line(s, 'PASS', 'every sub-tab, pattern panel and top tab builds with content');
+}
+
+// --- 8. the exported YAML is loadable by MPF -------------------------------
+async function checkExport(app, lights) {
+  const s = section('8. export');
+  const { buildShow } = await import('./js/exporter.js');
+  const layers = [
+    makeLayer({ name: 'sweep', shapeId: 'bar', durationMs: 600,
+      keys: [makeKey(0, { x: 0.5, y: 0.9, sx: 1.2, sy: 1.2, color: '#00ff40' }),
+        makeKey(1, { x: 0.5, y: 0.1, sx: 1.2, sy: 1.2, color: '#00ff40' })] }),
+    makePatternLayer({ name: 'blink', durationMs: 600,
+      pattern: { type: 'blink', color: '#ff2020', onMs: 200, offMs: 200 } }),
+  ];
+  const proj = { ...app.project, layers, durationMs: 900 };
+  let r;
+  try { r = await buildShow(proj, lights, app.renderer, () => {}); }
+  catch (e) { line(s, 'FAIL', 'export threw', e.message); return; }
+
+  const problems = [];
+  const firstLine = r.yaml.split('\n')[0];
+  if (firstLine !== '#show_version=6') problems.push(`first line is ${JSON.stringify(firstLine)}`);
+  if (!r.stats.frames) problems.push('no steps produced');
+  if (/\n\s+lights:\s*\n(?!\s+\S)/.test(r.yaml)) problems.push('an empty lights: block, which MPF reads as null');
+  if (/duration:\s*0(ms)?\s*$/m.test(r.yaml)) problems.push('a zero-duration step');
+  if (/^- time:/m.test(r.yaml) && /duration:/.test(r.yaml)) problems.push('mixes time: and duration:');
+  const r2 = await buildShow(proj, lights, app.renderer, () => {});
+  if (r2.yaml !== r.yaml) problems.push('two exports of the same show differ');
+  if (problems.length) line(s, 'FAIL', 'export output is not MPF-loadable', problems.join('\n'));
+  else line(s, 'PASS', `export is valid and reproducible (${r.stats.frames} steps, ${r.stats.lightsTouched} lights)`);
+
+  // and an empty show must be refused rather than written
+  const empty = await buildShow({ ...app.project, layers: [], durationMs: 500 },
+    lights, app.renderer, () => {});
+  if (empty.stats.frames) line(s, 'FAIL', 'a show with nothing lit still produced steps');
+  else line(s, 'PASS', 'a show with nothing lit produces no steps, so it cannot be written');
+}
+
+$('#run').onclick = runAll;
+waitForApp().then(() => { $('#summary').textContent = 'ready'; }).catch(() => {});
+</script>
