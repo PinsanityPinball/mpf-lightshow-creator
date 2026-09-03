@@ -11,6 +11,36 @@ const S = (id, over) => Object.assign(shapeDefaults(id), over || {});
  * light the lights directly - they are the ones that read well on a sparse
  * playfield - and the shape-based groups follow.
  */
+/**
+ * Groups worth sweeping, off whatever light map is loaded.
+ *
+ * Prefers groups that do not overlap: a machine's broadest tags are often
+ * supersets of each other, and sweeping through three of those lights nearly
+ * the same lights every slot, which looks like nothing is happening.
+ */
+export function suggestSweepTags(ctx) {
+  const lights = (ctx && ctx.lights) || [];
+  const tags = ((ctx && ctx.tags) || []).map((t) => t.tag).filter((t) => t !== 'all');
+  if (!lights.length || !tags.length) return [];
+
+  const sets = tags.map((tag) => ({
+    tag, names: new Set(lights.filter((l) => (l.tags || []).includes(tag)).map((l) => l.name)),
+  })).filter((s) => s.names.size >= 3 && s.names.size <= lights.length * 0.5);
+  sets.sort((a, b) => b.names.size - a.names.size);
+
+  const out = [];
+  const used = new Set();
+  for (const s of sets) {
+    let clash = false;
+    for (const n of s.names) if (used.has(n)) { clash = true; break; }
+    if (clash) continue;
+    for (const n of s.names) used.add(n);
+    out.push(s.tag);
+    if (out.length === 4) break;
+  }
+  return out;
+}
+
 export const GROUP_ORDER = ['Patterns', 'Wipes', 'Radial', 'Flashes'];
 
 export const PRESETS = [
@@ -125,8 +155,8 @@ export const PRESETS = [
     pattern: true,
     build: (c) => makePatternLayer({
       name: 'Comet', durationMs: 3000,
-      pattern: { type: 'comet', color: c, comets: 2, cometMs: 2500,
-        launchSpeed: 1.6, gravity: 3.2, bounceDamp: 0.62 },
+      pattern: { type: 'comet', color: c, comets: 2, cometMs: 4000,
+        launchSpeed: 1.4, gravity: 0, cometAngle: 35 },
     }),
   },
 
@@ -135,9 +165,14 @@ export const PRESETS = [
     name: 'Group sweep',
     group: 'Patterns',
     pattern: true,
-    build: (c) => makePatternLayer({
+    // Picks groups off the loaded map: an empty tag order lights nothing at
+    // all, so dropping this in from the preset dialog looked broken.
+    build: (c, ctx) => makePatternLayer({
       name: 'Group sweep', durationMs: 2400,
-      pattern: { type: 'sweep', color: c, dwellMs: 400, crossfade: 0.35 },
+      pattern: {
+        type: 'sweep', color: c, dwellMs: 400, crossfade: 0.35,
+        tagOrder: suggestSweepTags(ctx),
+      },
     }),
   },
 

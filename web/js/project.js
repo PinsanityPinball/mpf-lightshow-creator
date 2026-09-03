@@ -750,14 +750,15 @@ export function makePattern(over = {}) {
     // contagion - light spreading light-to-light through the real layout
     spreadMs: 2000,
     spreadFrom: 'centre',  // centre | top | bottom | left | right
-    spreadRadius: 0.18,    // how close counts as a neighbour, as a fraction of the group
+    spreadRadius: 0.10,    // how close counts as a neighbour, as a fraction of the group
     spreadHold: true,      // lit stays lit, versus a travelling front
     spreadTrail: 0.35,     // width of that front when it does not hold
     // comet - a thrown point under gravity, bouncing off the walls
     cometMs: 2500,
     comets: 2,
     launchSpeed: 1.6,
-    gravity: 3.2,
+    gravity: 0,           // 0 = straight lines bouncing off all four edges
+    cometAngle: 35,       // launch angle in degrees, when there is no gravity
     bounceDamp: 0.62,
     cometWidth: 0.09,
     cometTrail: 0.28,

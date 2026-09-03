@@ -1160,6 +1160,11 @@ class App {
     showModal('Add a layer', body, [button('Cancel', hideModal)]);
   }
 
+  /** What a preset needs to know about the loaded map to configure itself. */
+  presetContext() {
+    return { lights: this.lights, tags: this.tags };
+  }
+
   presetDialog() {
     const body = el('div');
     let colour = PRESET_COLOURS[0];
@@ -1201,7 +1206,7 @@ class App {
         grid.appendChild(el('button', {
           class: 'shape-btn',
           title: p.name,
-          onclick: () => { this.addLayer(p.build(colour)); hideModal(); },
+          onclick: () => { this.addLayer(p.build(colour, this.presetContext())); hideModal(); },
         }, [icon, el('span', { text: p.name })]));
       }
       body.appendChild(grid);
@@ -1233,7 +1238,7 @@ class App {
     const tagNames = this.tags.map((t) => t.tag).filter((t) => t !== 'all');
 
     const preset = pick(PRESETS);
-    const layer = preset.build(pick(PRESET_COLOURS));
+    const layer = preset.build(pick(PRESET_COLOURS), this.presetContext());
 
     // addLayer starts it at 0; we just choose how long it runs
     layer.durationMs = Math.max(200, Math.round(rand(600, 3000) / 50) * 50);

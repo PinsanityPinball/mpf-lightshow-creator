@@ -659,24 +659,55 @@ export class ShowRenderer {
       }
     }
 
-    d[seed] = 0;
-    let queue = [seed], max = 0;
-    while (queue.length) {
-      const next = [];
-      for (const i of queue) {
-        for (const j of adj.get(i)) {
-          if (d[j] >= 0) continue;
-          d[j] = d[i] + 1;
-          if (d[j] > max) max = d[j];
-          next.push(j);
+    // Breadth-first from the seed, then bridge to whatever it could not reach.
+    //
+    // A scattered playfield is not one connected graph at any sensible reach -
+    // a ramp's lights sit well away from the inserts. Parking every unreached
+    // light at max+1 lit all of them in one pop at the end of the spread, which
+    // is what it looked like: a nice spread, then everything at once. Instead
+    // each island is entered from whichever of its lights is physically nearest
+    // to something already lit, and the hop count carries on from there, with
+    // the size of the jump costing extra hops. The spread crosses the gap the
+    // way it would if a light were there.
+    let max = 0;
+    const spread = (start, from) => {
+      d[start] = from;
+      if (from > max) max = from;
+      let queue = [start];
+      while (queue.length) {
+        const next = [];
+        for (const i of queue) {
+          for (const j of adj.get(i)) {
+            if (d[j] >= 0) continue;
+            d[j] = d[i] + 1;
+            if (d[j] > max) max = d[j];
+            next.push(j);
+          }
+        }
+        queue = next;
+      }
+    };
+    spread(seed, 0);
+
+    let remaining = idx.filter((i) => d[i] < 0);
+    let guard = 0;
+    while (remaining.length && guard++ < 500) {
+      // nearest unreached light to anything already reached
+      let bestI = remaining[0], bestFrom = 0, bestD2 = Infinity;
+      for (const i of remaining) {
+        for (const j of idx) {
+          if (d[j] < 0) continue;
+          const dx = nx(i) - nx(j), dy = ny(i) - ny(j);
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bestD2) { bestD2 = d2; bestI = i; bestFrom = d[j]; }
         }
       }
-      queue = next;
+      // crossing a gap costs hops in proportion to how far it is
+      const jump = Math.max(1, Math.round(Math.sqrt(bestD2) / Math.max(0.01, radius)));
+      spread(bestI, bestFrom + jump);
+      remaining = idx.filter((i) => d[i] < 0);
     }
-    // A sparse map leaves islands the spread never reaches. Rather than leave
-    // them dark forever, they light one hop after everything else.
-    for (const i of idx) if (d[i] < 0) d[i] = max + 1;
-    if (idx.some((i) => d[i] === max + 1)) max += 1;
+    for (const i of idx) if (d[i] < 0) d[i] = max;
 
     const out = { d, max };
     perMap.set(key, out);
@@ -1128,7 +1159,13 @@ export class ShowRenderer {
       if (!b.n) return false;
       const hops = this.contagionHops(lights, mask,
         Math.max(0.02, p.spreadRadius), p.spreadFrom || 'centre');
-      const period = this.fitPeriod(layer, p.spreadMs, p.fit !== false);
+      // Fit means ONE complete spread across the clip, not a whole number of
+      // them: a spread finishes and holds, it does not cycle. Rounding it like
+      // a periodic pattern finished the spread halfway through the clip and
+      // left it sitting full for the rest.
+      const period = p.fit !== false && layer.durationMs > 0
+        ? layer.durationMs
+        : Math.max(1, p.spreadMs);
       const front = (t / period) * (hops.max + 1);
       const trail = Math.max(0.05, p.spreadTrail);
 
@@ -1147,38 +1184,70 @@ export class ShowRenderer {
     }
 
     if (p.type === 'comet') {
-      // A thrown point under gravity, bouncing off the walls and floor. The
-      // motion is pinball motion, and it is the sort of arc that is tedious to
-      // keyframe by hand. Computed from t directly, never stepped, so the
-      // preview and the export agree.
+      // Two modes. With no gravity it is the DVD logo: a straight line at
+      // constant speed reflecting off all four edges. With gravity it is a
+      // thrown ball, arcing and bouncing off the floor. Both are worked out
+      // from the time directly rather than stepped frame to frame, so they stay
+      // deterministic and the export matches the preview.
       const b = targetBounds(layer, lights, mask);
       if (!b.n) return false;
       const period = this.fitPeriod(layer, p.cometMs, p.fit !== false);
       const n = Math.max(1, Math.round(p.comets));
       const base = hashString(layer.seedKey || layer.id) ^ ((p.seed | 0) * 2654435761);
-      const g = Math.max(0.2, p.gravity);
+      const g = Math.max(0, p.gravity);
       const damp = Math.max(0.05, Math.min(0.95, p.bounceDamp));
       const width = Math.max(0.02, p.cometWidth);
       const tail = Math.max(0, p.cometTrail);
+      const speed = Math.max(0.05, p.launchSpeed);
 
-      const heads = [];
-      for (let k = 0; k < n; k++) {
+      // fold a coordinate back into 0..1, reflecting at each edge
+      const fold = (v) => {
+        const m = Math.abs(v % 2);
+        return m > 1 ? 2 - m : m;
+      };
+
+      // The playfield is far taller than it is wide, so equal speed on both
+      // axes would look like it is crawling sideways. Move in screen terms.
+      const aspect = b.h > 0 ? (b.w / b.h) : 1;
+
+      /** Where comet k is at fraction u through its run. */
+      const headAt = (k, u) => {
         const rand = mulberry32((base ^ (k * 0x9E3779B1)) >>> 0);
         const x0 = 0.15 + rand() * 0.7;
-        const vx = (rand() < 0.5 ? -1 : 1) * (0.4 + rand() * 0.8);
+        const y0 = 0.15 + rand() * 0.7;
+        const flip = rand() < 0.5 ? -1 : 1;
+        const spin = rand() < 0.5 ? -1 : 1;
+        if (g <= 0.001) {
+          const ang = ((p.cometAngle || 35) * D2R) * flip + (spin < 0 ? Math.PI : 0);
+          const dist = u * speed * 3;
+          return {
+            x: fold(x0 + Math.cos(ang) * dist),
+            y: fold(y0 + Math.sin(ang) * dist * aspect),
+          };
+        }
+        const v0 = speed * (0.8 + rand() * 0.4);
+        const vx = flip * (0.4 + rand() * 0.8);
+        const tt = u * (2 * v0 / g) * 3.2;         // about three bounces per run
+        return {
+          x: fold(x0 + vx * tt),
+          y: 1 - Math.min(1, this.cometHeight(tt, v0, g, damp)),
+        };
+      };
+
+      // Sample the head a few times backwards so the trail follows the path,
+      // whichever direction it happens to be going.
+      const STEPS = tail > 0 ? 7 : 1;
+      const heads = [];
+      for (let k = 0; k < n; k++) {
+        const rand = mulberry32((base ^ (k * 0x9E3779B1) ^ 0x5f356495) >>> 0);
         const offset = rand();
-        const v0 = Math.max(0.2, p.launchSpeed) * (0.8 + rand() * 0.4);
-        const u = ((t / period) + offset) % 1;
-        const tt = u * (2 * v0 / g) * 3.2;          // about three bounces per run
-        // horizontal travel, folded back at the walls
-        let hx = x0 + vx * tt;
-        hx = Math.abs(hx % 2);
-        if (hx > 1) hx = 2 - hx;
-        const hy = 1 - Math.min(1, this.cometHeight(tt, v0, g, damp));
-        heads.push({ x: hx, y: hy, prevY: hy });
+        for (let s2 = 0; s2 < STEPS; s2++) {
+          const back = (s2 / Math.max(1, STEPS - 1)) * tail * 0.35;
+          const u = (((t / period) + offset) - back % 1 + 1) % 1;
+          heads.push({ pos: headAt(k, u), gain: s2 === 0 ? 1 : 1 - s2 / STEPS });
+        }
       }
 
-      const aspect = b.h > 0 ? b.w / b.h : 1;
       for (let i = 0; i < lights.length; i++) {
         if (mask && !mask[i]) continue;
         const l = lights[i];
@@ -1186,14 +1255,11 @@ export class ShowRenderer {
         const ly = (l.y - b.minY) / (b.h || 1);
         let level = 0;
         for (const hd of heads) {
-          const dx = (lx - hd.x) * (aspect > 0 ? 1 : 1);
-          const dy = ly - hd.y;
+          const dx = lx - hd.pos.x;
+          // compare in screen terms, so the head is round rather than an oval
+          const dy = (ly - hd.pos.y) / Math.max(0.05, 1 / Math.max(0.05, aspect));
           const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < width) level = Math.max(level, 1 - dist / width);
-          else if (tail > 0 && dy < 0 && -dy < tail && Math.abs(dx) < width * 1.6) {
-            // a short trail hanging above where it has just been
-            level = Math.max(level, (1 + dy / tail) * 0.5);
-          }
+          if (dist < width) level = Math.max(level, (1 - dist / width) * hd.gain);
         }
         if (level > 0.004) put(i, p.color, level);
       }
@@ -1205,8 +1271,10 @@ export class ShowRenderer {
       // as noise on a scattered map; stepping group by group reads as a gesture.
       const order = (p.tagOrder || []).filter(Boolean);
       if (!order.length) return false;
-      const dwell = this.fitPeriod(layer, Math.max(1, p.dwellMs) * order.length,
-        p.fit !== false) / order.length;
+      // one pass through the groups over the clip, for the same reason
+      const dwell = p.fit !== false && layer.durationMs > 0
+        ? layer.durationMs / order.length
+        : Math.max(1, p.dwellMs);
       const cross = Math.max(0, Math.min(0.9, p.crossfade));
       const u = (t / (dwell * order.length)) % 1;
       const pos = u * order.length;              // 0..order.length

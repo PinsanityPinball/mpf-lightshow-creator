@@ -200,7 +200,7 @@ layer drives its tagged lights directly, with no shape and no pixel sampling, so
 | **Rain** | Drops falling down the playfield, each with a trail |
 | **Plasma** | Overlapping sine fields — every light its own colour and brightness |
 | **Contagion** | Light spreads from one light to its neighbours, then theirs — so it follows the shape of your playfield, climbing a ramp and rounding an orbit |
-| **Comet** | A point thrown under gravity, bouncing off the walls and floor, with a trail |
+| **Comet** | With gravity 0, the DVD-logo bounce: a straight line at constant speed reflecting off all four edges. With gravity, a thrown ball arcing and bouncing off the floor |
 | **Group sweep** | Whole tag groups lighting one after another, with a hand-over |
 | **Interference** | Two wave fields multiplied, so the beat between them travels far slower than either wave |
 | **Territories** | Drifting seeds, each owning its nearest lights; lights change colour as the boundaries sweep over them |
@@ -218,9 +218,13 @@ large and it jumps everywhere at once. The neighbour graph is built once per
 light map and cached — measured at 8 ms to build against 317 lights and 0.25 ms
 per frame afterwards, so a 300-frame export costs 74 ms rather than 2.4 seconds.
 
-**Group sweep needs tags.** Give it tag names in the order you want them to
-fire; the panel lists the tags on your map so you can click them in. With no
-tags it lights nothing and says so.
+**Group sweep** arrives with groups already chosen off your map — the four
+largest that do not overlap each other — so it does something the moment you
+drop it in. The panel lists your map's tags as buttons: click one to add it,
+click it again to take it out, and the number shows its place in the order. Tags
+nearest the top of that list overlap least, which is what makes a sweep read;
+a machine's broadest tags are often supersets of one another, and sweeping
+through three of those lights nearly the same lights every slot.
 
 **Fit to layer length** (on by default) makes one cycle span the clip: a
 complete fill for Stack, one pass for Chase, whole passes for Wave. Resize the

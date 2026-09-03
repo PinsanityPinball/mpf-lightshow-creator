@@ -1119,23 +1119,64 @@ export class Inspector {
         }))));
       root.appendChild(slider('Launch speed', p.launchSpeed, { min: 0.3, max: 4, step: 0.05 },
         this.live(`${layer.id}:pls`, 'launch speed', (v) => { p.launchSpeed = v; })));
-      root.appendChild(slider('Gravity', p.gravity, { min: 0.5, max: 12, step: 0.1 },
-        this.live(`${layer.id}:pg`, 'gravity', (v) => { p.gravity = v; })));
-      root.appendChild(slider('Bounciness', p.bounceDamp, { min: 0.05, max: 0.95, step: 0.01 },
-        this.live(`${layer.id}:pbd`, 'bounciness', (v) => { p.bounceDamp = v; })));
+      root.appendChild(slider('Gravity', p.gravity, { min: 0, max: 12, step: 0.1 },
+        this.live(`${layer.id}:pg`, 'gravity', (v) => {
+          const wasOff = (p.gravity || 0) <= 0.001;
+          p.gravity = v;
+          // the two modes offer different controls, so rebuild when it crosses
+          if (wasOff !== (v <= 0.001)) this.buildLayer();
+        })));
+      if ((p.gravity || 0) <= 0.001) {
+        root.appendChild(slider('Angle', p.cometAngle == null ? 35 : p.cometAngle,
+          { min: 5, max: 85, step: 1 },
+          this.live(`${layer.id}:pca`, 'angle', (v) => { p.cometAngle = v; })));
+        root.appendChild(hint('Gravity 0 is the DVD-logo bounce: a straight line at a '
+          + 'constant speed, reflecting off all four edges. Angle sets how steep the '
+          + 'path is - 45 makes clean diagonals, near 0 or 90 skims an edge.'));
+      } else {
+        root.appendChild(slider('Bounciness', p.bounceDamp, { min: 0.05, max: 0.95, step: 0.01 },
+          this.live(`${layer.id}:pbd`, 'bounciness', (v) => { p.bounceDamp = v; })));
+        root.appendChild(hint('With gravity it is a thrown ball: it arcs up, falls, and '
+          + 'bounces off the floor, losing height each time. Drop gravity to 0 for a '
+          + 'straight-line bounce off all four edges instead.'));
+      }
       root.appendChild(slider('Size', p.cometWidth, { min: 0.02, max: 0.4, step: 0.01 },
         this.live(`${layer.id}:pcw`, 'size', (v) => { p.cometWidth = v; })));
       root.appendChild(slider('Trail', p.cometTrail, { min: 0, max: 0.8, step: 0.02 },
         this.live(`${layer.id}:pct`, 'trail', (v) => { p.cometTrail = v; })));
       root.appendChild(field('Seed', numberInput(p.seed, 1, 9999, 1,
         (v) => edit('seed', () => { p.seed = Math.round(v); this.buildLayer(); }))));
-      root.appendChild(hint('Thrown from the floor and pulled back down, bouncing off the '
-        + 'walls. Worked out from the time directly rather than stepped frame to frame, so '
-        + 'it replays identically and the export matches the preview.'));
+      root.appendChild(hint('Worked out from the time directly rather than stepped frame '
+        + 'to frame, so it replays identically and the export matches the preview.'));
     }
 
     if (p.type === 'sweep') {
-      const known = (app.tags || []).map((tg) => tg.tag).filter((tg) => tg !== 'all');
+      // Offer the groups worth sweeping first. The raw tag order puts the
+      // broadest tags at the top - on one machine that is `strip` (300 lights)
+      // followed by four 150-light subsets of it - so picking the first few
+      // lights nearly the same lights every slot and the sweep looks static.
+      // Rank by how much of a group is its own rather than shared.
+      const lights = app.lights || [];
+      const members = new Map();
+      for (const tg of (app.tags || [])) {
+        if (tg.tag === 'all') continue;
+        members.set(tg.tag, lights.filter((l) => (l.tags || []).includes(tg.tag)));
+      }
+      const share = new Map();      // light name -> how many groups claim it
+      for (const set of members.values()) {
+        for (const l of set) share.set(l.name, (share.get(l.name) || 0) + 1);
+      }
+      const known = [...members.keys()].sort((x, y) => {
+        const score = (tg) => {
+          const set = members.get(tg);
+          if (!set.length) return -1;
+          // average exclusivity, penalising groups that cover almost everything
+          const own = set.reduce((n, l) => n + 1 / (share.get(l.name) || 1), 0) / set.length;
+          const size = set.length / Math.max(1, lights.length);
+          return own * (size > 0.5 ? 0.3 : 1);
+        };
+        return score(y) - score(x);
+      });
       const box = el('input', {
         type: 'text', value: (p.tagOrder || []).join(', '),
         placeholder: 'e.g. left_ramp, centre, right_orbit',
@@ -1146,6 +1187,13 @@ export class Inspector {
         this.buildLayer();
       }));
       root.appendChild(field('Order', box));
+      if (p.fit !== false) {
+        const n = Math.max(1, (p.tagOrder || []).length);
+        root.appendChild(hint('Fit to layer length is on, so the dwell comes from the '
+          + `clip: ${n} group${n === 1 ? '' : 's'} over its ${layer.durationMs} ms, `
+          + `about ${Math.round(layer.durationMs / n)} ms each. Turn Fit off to set the `
+          + 'dwell directly.'));
+      } else
       root.appendChild(field('Dwell (ms)', numberInput(p.dwellMs, 20, 30000, 10,
         (v) => edit('dwell', () => {
           p.dwellMs = Math.max(20, Math.round(v));
@@ -1164,14 +1212,30 @@ export class Inspector {
           + 'above, separated by commas, in the order you want them to fire.'));
       }
       if (known.length) {
+        const chosen = p.tagOrder || [];
         root.appendChild(el('div', { class: 'btn-row' },
-          known.slice(0, 10).map((tg) => button(tg, () => edit('add group', () => {
-            p.tagOrder = (p.tagOrder || []).concat([tg]);
-            this.buildLayer();
-          }), 'small'))));
-        root.appendChild(hint('Click a tag to append it. Groups fire one after another, '
-          + 'which reads far more clearly on a scattered playfield than a single '
-          + 'travelling dot.'));
+          known.slice(0, 14).map((tg) => {
+            const at = chosen.indexOf(tg);
+            const on = at >= 0;
+            // Toggle, not append: changing your mind about a group meant
+            // retyping the list, and nothing showed which were already in it.
+            const b = button(on ? `${at + 1}. ${tg}` : tg, () => edit('toggle group', () => {
+              const next = (p.tagOrder || []).slice();
+              const i = next.indexOf(tg);
+              if (i >= 0) next.splice(i, 1); else next.push(tg);
+              p.tagOrder = next;
+              this.buildLayer();
+            }), 'small' + (on ? ' on' : ''));
+            b.title = on
+              ? `Group ${at + 1} of ${chosen.length} - click to remove`
+              : `${(members.get(tg) || []).length} lights - click to add`;
+            return b;
+          })));
+        root.appendChild(hint('Click a tag to add it, click it again to take it out. '
+          + 'The number is its place in the order. Groups fire one after another, which '
+          + 'reads far more clearly on a scattered playfield than a single travelling dot.'
+          + (chosen.length ? '' : ' Groups nearest the top of this list overlap least, '
+            + 'so they read most clearly.')));
       }
     }
 
