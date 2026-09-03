@@ -151,8 +151,8 @@ nothing is ever hidden — and on `add`, Doors degrades into "two halves drift
 apart" over a layer that was visible the whole time. Pleasant, but not the
 effect anyone pictures.
 
-**Decision needed:** whether choosing Doors or Flip should set the layer to
-`normal`, warn, or say nothing.
+**Settled:** choosing one of these sets the layer to `normal`. See
+[Decisions](#decisions).
 
 ### Export cost
 
@@ -216,10 +216,53 @@ machine, and keep them only if they earn it.
 
 ---
 
+## Decisions
+
+Answered, so these are settled unless something in the build contradicts them.
+
+**A reveal-style transition sets `blend: 'normal'` automatically.** Doors and
+Flip only read as reveals under `normal`, so choosing one switches the layer.
+Two riders: it must be part of the same undo step as choosing the transition,
+and it must say so in the status line, because an additive glow layer turning
+opaque is a large visual change to make silently. Removing the transition does
+*not* switch the blend back - a silent revert is worse than a change you were
+told about.
+
+**In and Out share one duration.** One control, both ends.
+
+**Push writes both sides at once - as a one-time action, not a live link.**
+This is the one answer that needs care. "Both sides" implies knowing who the
+other side is, which is exactly the anchoring problem this model was chosen to
+avoid: with ~63 layers live at any instant there is no "the next layer", and an
+instanced partner has no single firing to pair with. So when Push is chosen the
+user picks the partner, and the matching In is written onto it there and then,
+with the same duration. Nothing persistent is created, so nothing is orphaned
+when a layer moves or is deleted. Drift after a later one-sided edit remains
+possible, and remains acceptable.
+
+**Transitions extend the layer rather than eating into it**, and they extend it
+*forwards*. A 2000ms layer with 300ms transitions runs 2600ms:
+
+| | |
+|---|---|
+| In | `[start, start + 300]` |
+| Body | `[start + 300, start + 2300]` |
+| Out | `[start + 2300, start + 2600]` |
+
+The start does not move. Extending backwards would push a layer sitting at 0ms
+into negative time, and shows are meant to start at 0. "Start" keeps meaning
+"when this begins to appear".
+
+Consequences to handle: the layer's clip gets longer on the timeline the moment
+a transition is added, and the show's total duration can grow with it.
+
+---
+
 ## Open questions
 
-- Should choosing a reveal-style transition set `blend: 'normal'` automatically?
-- Do In and Out share one duration control, or two?
-- Should Push set both sides' durations together, given it drifts if one is
-  later edited alone?
-- Does the transition duration eat into the layer's own duration, or extend it?
+- Should the transition list be one dropdown, or split by tier (mask effects
+  versus ones that move the layer)?
+- Is there a sensible maximum duration, given a transition longer than the body
+  it decorates is probably a mistake?
+- Should the export-cost warning be a threshold on total steps, or on how much
+  transitions added over a hypothetical hard-cut version of the same show?
