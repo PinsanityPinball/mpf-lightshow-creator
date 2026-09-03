@@ -74,6 +74,17 @@ function line(sec, kind, what, detail) {
   sec.appendChild(row);
 }
 
+/**
+ * Let the DOM settle.
+ *
+ * NOT a timer. A backgrounded tab clamps setTimeout to roughly once a second,
+ * and this page runs hundreds of small settles - measured at 992ms for a
+ * requested 30ms, which made the suite look like it had hung when it was only
+ * being throttled. The inspector builds synchronously anyway, so a microtask is
+ * all that is ever needed.
+ */
+const settle = () => Promise.resolve();
+
 /** Wait for the app in the frame to finish booting. */
 function waitForApp() {
   return new Promise((resolve, reject) => {
@@ -377,7 +388,7 @@ async function checkPanelControls(app) {
     app.selectedKeyIndex = 0;
     insp.layerTab = 'pattern';
     insp.refresh();
-    await new Promise((r) => setTimeout(r, 40));
+    await settle();
 
     const panel = doc.getElementById('panelLayer');
     if (!panel) { line(s, 'FAIL', 'no #panelLayer in the frame'); return; }
@@ -472,9 +483,16 @@ async function checkPresets(app, lights) {
   if (noPath.length) line(s, 'WARN', 'paths with no preset', noPath.map((p) => p.id).join(', '));
   else line(s, 'PASS', 'every motion path has a preset');
 
-  if (overrides.length) {
-    line(s, 'WARN', `${overrides.length} preset override(s) - check none contradict a default you meant`,
-      overrides.join('\n'));
+  // A preset differing from the defaults is the entire point of a preset, so
+  // listing all of them was noise - 24 lines, none of them a problem. What is
+  // worth seeing is an override that switches something OFF, because that can
+  // silently disable a feature and leave you hunting for why it does nothing.
+  const disabling = overrides.filter((o) => /-> (0|false|""|\[\])$/.test(o));
+  if (disabling.length) {
+    line(s, 'WARN', `${disabling.length} preset override(s) turn a setting off`,
+      disabling.join('\n'));
+  } else {
+    line(s, 'PASS', `${overrides.length} preset overrides, none of which disable a setting`);
   }
 }
 
@@ -512,7 +530,22 @@ async function checkWizardParity(app) {
     ['sample rate', /\b(sample rate|hz)\b/],
   ];
 
-  const textOf = (root) => (root ? (root.textContent || '').toLowerCase() : '');
+  // textContent runs neighbouring labels together - the Shape tab's help text
+  // ends "...which way it faces" immediately before the "Orientation" heading,
+  // giving "facesorientation", where \borientation\b cannot match. Joining the
+  // text nodes with spaces keeps word boundaries intact. Placeholders and titles
+  // count too: some controls say what they are only there.
+  const textOf = (root) => {
+    if (!root) return '';
+    const parts = [];
+    const walk = root.ownerDocument.createTreeWalker(root, 4 /* SHOW_TEXT */);
+    let n;
+    while ((n = walk.nextNode())) parts.push(n.nodeValue);
+    for (const el of root.querySelectorAll('input,select,textarea,button')) {
+      parts.push(el.placeholder || '', el.title || '', el.getAttribute('aria-label') || '');
+    }
+    return parts.join(' ').toLowerCase();
+  };
 
   // --- everything the Layer panel shows, across all its sub-tabs
   const L = makeLayer({ name: 'parity', shapeId: 'bar', durationMs: 1000 });
@@ -520,23 +553,67 @@ async function checkWizardParity(app) {
   app.selectedLayerId = L.id;
   app.selectedKeyIndex = 0;
   app.inspector.refresh();
-  await new Promise((r) => setTimeout(r, 60));
+  await settle();
   let panelText = '';
-  for (const tab of [...doc.querySelectorAll('#panelLayer .subtab')]) {
-    tab.click();
-    await new Promise((r) => setTimeout(r, 30));
-    // open any folds so their contents count
+  // Walk by tab id rather than by clicking captured nodes: buildLayer replaces
+  // the tab row on every switch, so the nodes go stale mid-loop.
+  const tabIds = [...doc.querySelectorAll('#panelLayer .subtab')].map((t) => t.textContent);
+  for (let i = 0; i < tabIds.length; i++) {
+    const live = [...doc.querySelectorAll('#panelLayer .subtab')]
+      .find((t) => t.textContent === tabIds[i]);
+    if (live) live.click();
+    await settle();
     for (const t of [...doc.querySelectorAll('#panelLayer .wiz-adv')]) t.click();
-    await new Promise((r) => setTimeout(r, 20));
+    await settle();
     panelText += ' ' + textOf(doc.getElementById('panelLayer'));
+    // Some controls only exist once a mode is chosen: "Invert" appears on the
+    // Lights tab only after "Only these tags". Reporting those as missing is
+    // wrong - they are one choice away, exactly like the wizard's own steps - so
+    // walk every option of every dropdown and count what each one reveals.
+    const selects = [...doc.querySelectorAll('#panelLayer select')].length;
+    for (let sIdx = 0; sIdx < selects; sIdx++) {
+      const all = [...doc.querySelectorAll('#panelLayer select')];
+      const sel = all[sIdx];
+      if (!sel || sel.options.length < 2) continue;
+      const was = sel.value;
+      for (const opt of [...sel.options]) {
+        sel.value = opt.value;
+        sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+        await settle();
+        for (const t of [...doc.querySelectorAll('#panelLayer .wiz-adv')]) t.click();
+        await settle();
+        panelText += ' ' + textOf(doc.getElementById('panelLayer'));
+      }
+      const back = [...doc.querySelectorAll('#panelLayer select')][sIdx];
+      if (back) {
+        back.value = was;
+        back.dispatchEvent(new win.Event('change', { bubbles: true }));
+        await settle();
+      }
+    }
   }
+  // "the panel" means the whole right-hand side. Sample rate is a whole-show
+  // setting and lives on the Show tab, which is the right home for it - scanning
+  // only the Layer tab reported it as missing when it is one click away.
+  for (const name of ['Keyframe', 'Show', 'Export']) {
+    const tab = [...doc.querySelectorAll('.tab')].find((x) => x.textContent.trim() === name);
+    if (!tab) continue;
+    tab.click();
+    await settle();
+    const id = { Keyframe: 'panelKey', Show: 'panelShow', Export: 'panelExport' }[name];
+    for (const t of [...doc.querySelectorAll('#' + id + ' .wiz-adv')]) t.click();
+    await settle();
+    panelText += ' ' + textOf(doc.getElementById(id));
+  }
+  const layerTab = [...doc.querySelectorAll('.tab')].find((x) => x.textContent.trim() === 'Layer');
+  if (layerTab) { layerTab.click(); await settle(); }
   // a path has to be chosen before its settings exist
   const pathTab = [...doc.querySelectorAll('#panelLayer .subtab')].find((t) => t.textContent === 'Path');
   if (pathTab) {
     pathTab.click();
-    await new Promise((r) => setTimeout(r, 30));
+    await settle();
     const spiral = [...doc.querySelectorAll('#panelLayer button')].find((x) => x.textContent === 'Spiral');
-    if (spiral) { spiral.click(); await new Promise((r) => setTimeout(r, 60)); }
+    if (spiral) { spiral.click(); await settle(); }
     panelText += ' ' + textOf(doc.getElementById('panelLayer'));
   }
 
@@ -544,7 +621,7 @@ async function checkWizardParity(app) {
   let wizText = '';
   try {
     app.openWizard();
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200));   // wizard mount is the one real wait
     // pause the preview first: its animation loop repaints while we click
     if (app.wizard && app.wizard.setPlaying) app.wizard.setPlaying(false);
     const crumbCount = doc.querySelectorAll('#wizard .wiz-crumb').length;
@@ -552,9 +629,9 @@ async function checkWizardParity(app) {
       const c = doc.querySelectorAll('#wizard .wiz-crumb')[i];
       if (!c) break;
       c.click();
-      await new Promise((r) => setTimeout(r, 30));
+      await settle();
       const adv = doc.querySelector('#wizard .wiz-adv');
-      if (adv) { adv.click(); await new Promise((r) => setTimeout(r, 20)); }
+      if (adv) { adv.click(); await settle(); }
       wizText += ' ' + textOf(doc.querySelector('#wizard .wiz-body'));
     }
     if (app.wizard) app.wizard.close();
@@ -580,7 +657,7 @@ async function checkWizardParity(app) {
   const steps = [...doc.querySelectorAll('#wizard .wiz-crumb')].map((c) =>
     c.textContent.replace(/^\d+\.\s*/, ''));
   app.inspector.refresh();
-  await new Promise((r) => setTimeout(r, 40));
+  await settle();
   const tabs = [...doc.querySelectorAll('#panelLayer .subtab')].map((t) => t.textContent);
   if (steps.length && JSON.stringify(steps) !== JSON.stringify(tabs)) {
     line(s, 'FAIL', 'the wizard steps and the panel tabs are not the same list',
@@ -677,12 +754,12 @@ async function checkPanes(app) {
     app.selectedLayerId = L.id;
     app.selectedKeyIndex = 0;
     insp.refresh();
-    await new Promise((r) => setTimeout(r, 40));
+    await settle();
     const tabs = [...doc.querySelectorAll('#panelLayer .subtab')];
     if (!tabs.length) { bad.push(`${kind}: no sub-tabs`); continue; }
     for (const t of tabs) {
       t.click();
-      await new Promise((r) => setTimeout(r, 25));
+      await settle();
       const pane = doc.querySelector('#panelLayer .subpane');
       if (!pane || pane.children.length === 0) bad.push(`${kind}/${t.textContent}: empty`);
     }
@@ -692,7 +769,7 @@ async function checkPanes(app) {
     const L = makePatternLayer({ name: type, durationMs: 1000, pattern: { type } });
     app.project.layers = [L]; app.selectedLayerId = L.id;
     insp.layerTab = 'pattern'; insp.refresh();
-    await new Promise((r) => setTimeout(r, 25));
+    await settle();
     const pane = doc.querySelector('#panelLayer .subpane');
     if (!pane || pane.children.length < 3) bad.push(`pattern ${type}: thin panel`);
   }
@@ -700,7 +777,7 @@ async function checkPanes(app) {
     const tab = [...doc.querySelectorAll('.tab')].find((x) => x.textContent.trim() === name);
     if (!tab) { bad.push('missing top tab ' + name); continue; }
     tab.click();
-    await new Promise((r) => setTimeout(r, 40));
+    await settle();
   }
   if (bad.length) line(s, 'FAIL', `${bad.length} panel problem(s)`, bad.join('\n'));
   else line(s, 'PASS', 'every sub-tab, pattern panel and top tab builds with content');
