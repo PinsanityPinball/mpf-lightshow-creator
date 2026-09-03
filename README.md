@@ -7,6 +7,12 @@ MPF show. A rebuild of the original BlitzMax
 [`showcreator`](https://github.com/missionpinball/showcreator), with parametric
 shapes, a real timeline, light patterns and direct manipulation.
 
+> **Built with [Claude Code](https://claude.com/claude-code).** Almost all of the
+> code here was written by Claude, working from my direction, my machine's light
+> maps, and a lot of back-and-forth about what actually reads well on a
+> playfield. The ideas and the pinball knowledge are mine; the implementation is
+> Claude's.
+
 ---
 
 ## Features
