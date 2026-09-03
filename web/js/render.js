@@ -276,20 +276,26 @@ export class ShowRenderer {
       // Erase and Normal work by reading and rewriting `accum`, but averaging
       // layers do not reach `accum` until their group is resolved. Resolving
       // early - right before a layer that reads it - is what makes "erase only
-      // affects the layers below it" true for averaged layers too. Without
-      // this an eraser simply had no effect on anything averaged.
-      if (layer.blend === 'erase' || layer.blend === 'normal') {
-        this.resolveAverage(lights.length);
-      }
+      // affects the layers below it" true for averaged layers too.
+      //
+      // Only for a layer that is actually playing, though: flushing on blend
+      // alone let a finished eraser sitting between two averaging layers split
+      // them into two groups, which sum instead of averaging and come out a
+      // different colour despite the eraser contributing nothing.
+      const mutates = layer.blend === 'erase' || layer.blend === 'normal';
 
       if (layer.kind === 'show') {
         const st = layerStateAtTime(layer, timeMs);
+        if (!st) continue;
+        if (mutates) this.resolveAverage(lights.length);
         if (this.accumulateShow(layer, lights, timeMs, st, toLin)) showLayers++;
         continue;
       }
       if (layer.kind === 'pattern') {
-        const st = layerStateAtTime(layer, timeMs);
         const fires = patternTimesAt(layer, timeMs);
+        if (!fires.length) continue;
+        if (mutates) this.resolveAverage(lights.length);
+        const st = layerStateAtTime(layer, timeMs);
         let ran = false;
         for (const f of fires) {
           if (this.accumulatePattern(layer, lights, timeMs, st, toLin, f.t)) ran = true;
@@ -301,10 +307,12 @@ export class ShowRenderer {
       // A layer with extra fire times is drawn once per firing that is alive
       // now. They overlap freely: a 1s gesture fired every 200ms has five of
       // itself on screen, which is the reason the feature exists.
-      const live = layerInstancesAtTime(layer, timeMs);
+      const live = layerInstancesAtTime(layer, timeMs)
+        .filter((inst) => inst.state && inst.state.alpha > 0);
+      if (!live.length) continue;
+      if (mutates) this.resolveAverage(lights.length);
       let drew = false;
       for (const inst of live) {
-        if (!inst.state || inst.state.alpha <= 0) continue;
         if (this.drawAndAccumulate(layer, inst.state, lights, opts, toLin)) drew = true;
       }
       if (drew) shapeLayers++;
@@ -882,15 +890,18 @@ export class ShowRenderer {
       if (!b.n) return false;
       const period = this.fitPeriod(layer, p.sweepMs, p.fit !== false);
       const width = Math.max(0.02, p.bandWidth);
+      const bounce = p.bounce !== false;
       let u = (t / period) % 1;
-      // Reverse has to move the head, not just the tail. It used to only flip
-      // which side the trail fell on, so the band swept the same way whether it
-      // was ticked or not.
-      if (p.reverse) u = 1 - u;
-      // a bounce is a triangle wave; without it the band wraps round instead
-      const head = p.bounce !== false ? (u < 0.5 ? u * 2 : 2 - u * 2) : u;
-      const goingBack = p.bounce !== false && u >= 0.5;
-      const dir = goingBack ? -1 : 1;
+      // Reversing a bounce by mirroring time does nothing: a triangle wave is
+      // symmetric, so head(1-u) === head(u). Half a period starts it at the far
+      // end travelling the other way, which is what reversing a bounce means.
+      // A wrapping sweep has no such symmetry and does mirror.
+      if (p.reverse) u = bounce ? (u + 0.5) % 1 : 1 - u;
+      const head = bounce ? (u < 0.5 ? u * 2 : 2 - u * 2) : u;
+      // Which way the head is moving right now, so the trail falls behind it.
+      // For a bounce that is the half of the cycle we are in; for a wrap it is
+      // fixed, and reversed when reverse is on.
+      const dir = bounce ? (u < 0.5 ? 1 : -1) : (p.reverse ? -1 : 1);
       const tail = Math.max(0, Math.min(1, p.tailLen));
 
       for (let i = 0; i < lights.length; i++) {

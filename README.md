@@ -30,6 +30,8 @@ shapes, a real timeline, light patterns and direct manipulation.
   in one click, plus transforms and randomisers
 - **Blend modes** — add, normal, *average* (mixes colours without dimming), or
   *erase* (switches lights off wherever a layer reaches)
+- **Fire a layer many times** — one layer, many start times, varied per firing,
+  instead of a copy per repeat
 - **Step-by-step wizard** with a live preview, or full manual control
 
 **Light patterns** — no shape, no sampling, exact colours straight to your lights
@@ -156,6 +158,25 @@ The right-hand **Layer** panel splits into the same seven steps the wizard walks
 — Shape, Path, Motion, Size, Colour, Lights, Timing — so learning one teaches
 the other. Each step leads with a few obvious choices and folds the rest behind
 **Advanced options**.
+
+### Firing a layer more than once
+
+A layer normally fires once. Give it extra start times — **Layer → Timing → Fire
+again** — and the same animation runs at each of them, overlapping freely. One
+layer instead of a copy per firing.
+
+This matters more than it sounds: across the saved shows in `shows/`, **63–71% of
+every layer is an exact duplicate** of another differing only in start time. One
+file holds 291 copies of a single gesture among 5,033 layers, which is how a
+300-second show reaches 14 MB.
+
+**Vary each firing** stops a train looking mechanical. *Hue shift* is cumulative
+degrees per firing, so a long run drifts through the spectrum. Position and size
+take short lists that cycle by firing number, so three values cover any number of
+firings.
+
+A layer with no extra times behaves exactly as before, so existing shows are
+unaffected.
 
 ### Pattern layers
 
