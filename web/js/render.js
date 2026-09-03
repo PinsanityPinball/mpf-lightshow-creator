@@ -1328,52 +1328,6 @@ export class ShowRenderer {
       return true;
     }
 
-    if (p.type === 'voronoi') {
-      // Drifting seeds, each owning the lights nearest to it. Lights flip
-      // colour as the boundaries sweep over them, which is a whole-playfield
-      // effect with no shape anywhere in it.
-      const b = targetBounds(layer, lights, mask);
-      if (!b.n) return false;
-      const period = this.fitPeriod(layer, p.voronoiMs, p.fit !== false);
-      const n = Math.max(1, Math.round(p.seeds));
-      const base = hashString(layer.seedKey || layer.id) ^ ((p.seed | 0) * 2654435761);
-      const drift = Math.max(0, p.voronoiDrift);
-      const palette = (p.colors && p.colors.length) ? p.colors : [p.color];
-      const u = (t / period) % 1;
-
-      const pts = [];
-      for (let k = 0; k < n; k++) {
-        const rand = mulberry32((base ^ (k * 0x9E3779B1)) >>> 0);
-        const ox = rand(), oy = rand();
-        const ang = rand() * Math.PI * 2 + u * Math.PI * 2;
-        pts.push({
-          x: ox + Math.cos(ang) * drift,
-          y: oy + Math.sin(ang) * drift,
-          hex: palette[k % palette.length],
-        });
-      }
-
-      for (let i = 0; i < lights.length; i++) {
-        if (mask && !mask[i]) continue;
-        const l = lights[i];
-        const lx = (l.x - b.minX) / (b.w || 1);
-        const ly = (l.y - b.minY) / (b.h || 1);
-        let bestD = Infinity, second = Infinity, hex = pts[0].hex;
-        for (const q of pts) {
-          const dx = lx - q.x, dy = ly - q.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < bestD) { second = bestD; bestD = d2; hex = q.hex; }
-          else if (d2 < second) second = d2;
-        }
-        // dim right on a boundary so the territories have visible edges
-        const edge = second === Infinity ? 1
-          : Math.min(1, (Math.sqrt(second) - Math.sqrt(bestD)) / 0.06);
-        const level = 0.25 + 0.75 * Math.max(0, edge);
-        put(i, hex, level);
-      }
-      return true;
-    }
-
     if (p.type === 'chase') {
       const order = orderedTargets(layer, lights, mask);
       const n = order.length;

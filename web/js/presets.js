@@ -188,17 +188,6 @@ export const PRESETS = [
     }),
   },
 
-  {
-    id: 'voronoi',
-    name: 'Territories',
-    group: 'Patterns',
-    pattern: true,
-    build: (c) => makePatternLayer({
-      name: 'Territories', durationMs: 6000,
-      pattern: { type: 'voronoi', color: c, seeds: 4, voronoiMs: 6000,
-        voronoiDrift: 0.22 },
-    }),
-  },
 
   {
     id: 'breathe',

@@ -37,7 +37,7 @@ shapes, a real timeline, light patterns and direct manipulation.
 **Light patterns** — no shape, no sampling, exact colours straight to your lights
 
 - Chase, Marquee, Sparkle, Wave, Stack, Fire, Pinwheel, Scanner, Rain, Plasma,
-  Contagion, Comet, Group sweep, Interference, Territories, Blink and Solid
+  Contagion, Comet, Group sweep, Interference, Blink and Solid
 - Most work off your real light *positions*, so they follow your playfield
   layout rather than a drawn shape
 
@@ -203,7 +203,6 @@ layer drives its tagged lights directly, with no shape and no pixel sampling, so
 | **Comet** | With gravity 0, the DVD-logo bounce: a straight line at constant speed reflecting off all four edges. With gravity, a thrown ball arcing and bouncing off the floor |
 | **Group sweep** | Whole tag groups lighting one after another, with a hand-over |
 | **Interference** | Two wave fields multiplied, so the beat between them travels far slower than either wave |
-| **Territories** | Drifting seeds, each owning its nearest lights; lights change colour as the boundaries sweep over them |
 | **Solid** | One colour, with an optional pulse shape |
 | **Blink** | On/off, also with a pulse shape |
 
@@ -247,9 +246,15 @@ value.
 ## Working in it
 
 **Playfield** — click a shape to select, drag to move. Blue corner handle
-scales, orange handle rotates. `Shift` moves every keyframe together, snaps
-rotation to 15°, or keeps scaling uniform. Hover a light to see its name and
-colour.
+scales, orange handle rotates. Hover a light to see its name and colour.
+
+**What a drag moves.** With auto-key off (the default), dragging moves the
+*whole layer* — every keyframe shifts together and the shape follows your
+pointer exactly. Park the playhead on a keyframe and the drag edits just that
+one instead, which is the precise-editing case. With auto-key on, a drag writes
+to the keyframe under the playhead, creating one if there isn't one. `Shift`
+always moves everything; it also snaps rotation to 15° and keeps scaling
+uniform.
 
 **Timeline** — drag a clip to move it, drag its ends to retime it. Drag keyframe
 diamonds; double-click a clip to add one. `Alt` disables frame snapping. Wheel

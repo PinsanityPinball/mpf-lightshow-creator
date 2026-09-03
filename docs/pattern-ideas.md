@@ -1,10 +1,14 @@
 # Pattern ideas
 
-> **Status: all six are now built.** Contagion, Comet, Group sweep,
-> Interference and Territories shipped as patterns, and Breathing shipped as a
-> *pulse shape* option on Solid and Blink rather than as a pattern of its own,
-> which is the right home for it. This document is kept as the reasoning behind
-> each one, and for the rejected list at the bottom.
+> **Status: five of six shipped.** Contagion, Comet, Group sweep and
+> Interference shipped as patterns, and Breathing shipped as a *pulse shape*
+> option on Solid and Blink rather than as a pattern of its own, which is the
+> right home for it.
+>
+> **Voronoi was built and then removed.** The doubt recorded below — that it
+> wants a dense grid to read as territory rather than as noise — was right: on a
+> few hundred scattered playfield lights it just looked noisy. Kept here as the
+> reasoning, and for the rejected list at the bottom.
 
 These were candidates for the next round of light patterns, written up so the
 good ones could be picked out before any code was written.

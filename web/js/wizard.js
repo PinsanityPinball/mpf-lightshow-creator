@@ -624,7 +624,13 @@ export class Wizard {
     c.appendChild(num('Length (ms)', L.durationMs, 16, 600000, 10, (v) => { L.durationMs = Math.round(v); }));
     c.appendChild(num('Repeat', L.repeat || 1, 1, 200, 1, (v) => { L.repeat = Math.round(v); }));
     c.appendChild(el('div', { class: 'btn-row' }, [
-      checkbox('Ping-pong', L.pingpong, (v) => { L.pingpong = v; }),
+      checkbox('Ping-pong', L.pingpong, (v) => {
+        L.pingpong = v;
+        // nothing to reverse at repeat 1, so give it a second pass
+        if (v && (L.repeat || 1) < 2) L.repeat = 2;
+        else if (!v && (L.repeat || 1) === 2) L.repeat = 1;
+        this.render();
+      }),
       checkbox('Visible after', L.holdAfter, (v) => { L.holdAfter = v; }),
     ]));
     c.appendChild(field('Blend', selectBox(L.blend, [

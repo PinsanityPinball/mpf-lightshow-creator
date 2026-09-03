@@ -284,13 +284,47 @@ class App {
    * With auto-key on, that is the keyframe under the playhead - created if it
    * does not exist yet. Otherwise it is whichever key is selected.
    */
+  /**
+   * Where the playhead sits inside one run of this layer, 0..1, or null when
+   * the layer is not playing at this moment.
+   */
+  layerPhase(layer) {
+    const dur = Math.max(1, layer.durationMs);
+    const reps = Math.max(1, layer.repeat || 1);
+    const local = this.renderTime() - layer.startMs;
+    if (local < 0 || local >= dur * reps) return null;
+    const cycle = Math.floor(local / dur);
+    let u = (local - cycle * dur) / dur;
+    if (layer.pingpong && cycle % 2 === 1) u = 1 - u;
+    return u;
+  }
+
+  /** The keyframe the playhead is parked on, within half a frame, or null. */
+  keyAtPlayhead(layer) {
+    const u = this.layerPhase(layer);
+    if (u === null) return null;
+    const tol = (msPerFrame(this.project) / 2) / Math.max(1, layer.durationMs);
+    for (let i = 0; i < layer.keys.length; i++) {
+      if (Math.abs(layer.keys[i].t - u) <= tol) return i;
+    }
+    return null;
+  }
+
   targetKey(layer) {
     if (!layer.keys.length) {
       layer.keys.push(makeKey(0));
       invalidateKeys(layer);
     }
     const sorted = layer.keys.slice().sort((a, b) => a.t - b.t);
-    if (!this.autoKey) return layer.keys[Math.min(this.selectedKeyIndex, layer.keys.length - 1)];
+    if (!this.autoKey) {
+      // Prefer the keyframe the playhead is actually on. It used to always hand
+      // back keys[selectedKeyIndex] regardless of where the playhead was, so a
+      // drag moved some other keyframe and the shape only followed the pointer
+      // part of the way - which reads as the app refusing to move it.
+      const at = this.keyAtPlayhead(layer);
+      if (at !== null) { this.selectedKeyIndex = at; return layer.keys[at]; }
+      return layer.keys[Math.min(this.selectedKeyIndex, layer.keys.length - 1)];
+    }
 
     const dur = Math.max(1, layer.durationMs);
     const reps = Math.max(1, layer.repeat || 1);
@@ -1704,12 +1738,6 @@ function patternThumb(pattern) {
         if (x === 3) g.moveTo(x, y); else g.lineTo(x, y);
       }
       g.stroke(); });
-  } else if (t === 'voronoi') {
-    // four territories
-    g.globalAlpha = 1; g.fillRect(2, 2, 15, 18);
-    g.globalAlpha = 0.6; g.fillRect(18, 2, 14, 12);
-    g.globalAlpha = 0.35; g.fillRect(2, 21, 12, 11);
-    g.globalAlpha = 0.75; g.fillRect(15, 15, 17, 17);
   } else if (t === 'sparkle') {
     const pts = [[8, 9], [22, 7], [15, 17], [26, 20], [7, 24], [19, 27]];
     pts.forEach(([x, y], i) => {

@@ -168,10 +168,17 @@ export class Stage {
       // snapshot taken after that already contains it, so undo could not remove it
       app.pushUndo('move');
       const key = app.targetKey(hit);
+      // Dragging a shape should move the shape. With auto-key off and the
+      // playhead between keyframes there is no single keyframe the drag
+      // obviously belongs to, so it moves the whole layer and the shape follows
+      // the pointer exactly. Parked on a keyframe, or with auto-key on, the
+      // drag edits that one keyframe as before. Shift always moves everything.
+      const onKey = app.keyAtPlayhead(hit) !== null;
+      const moveAll = e.shiftKey || (!app.autoKey && !onKey);
       this.drag = {
         mode: 'move',
         layer: hit,
-        all: e.shiftKey,
+        all: moveAll,
         grabX: x / this.cw - (st ? st.x : 0.5),
         grabY: y / this.ch - (st ? st.y : 0.5),
         baseKeys: hit.keys.map((k) => ({ x: k.x, y: k.y })),

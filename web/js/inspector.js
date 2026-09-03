@@ -581,7 +581,16 @@ export class Inspector {
     root.appendChild(field('Repeat', numberInput(layer.repeat || 1, 1, 200, 1,
       (v) => edit('repeat', () => { layer.repeat = Math.max(1, Math.round(v)); }))));
     root.appendChild(el('div', { class: 'btn-row' }, [
-      checkbox('Ping-pong', layer.pingpong, (v) => edit('pingpong', () => { layer.pingpong = v; })),
+      checkbox('Ping-pong', layer.pingpong, (v) => edit('pingpong', () => {
+        layer.pingpong = v;
+        // Ping-pong reverses every other repetition, so it does nothing at all
+        // at repeat 1 - the checkbox looked broken. Turning it on gives it
+        // something to reverse; turning it off puts back the 1 it came from,
+        // but leaves a deliberately larger count alone.
+        if (v && (layer.repeat || 1) < 2) layer.repeat = 2;
+        else if (!v && (layer.repeat || 1) === 2) layer.repeat = 1;
+        this.buildLayer();
+      })),
     ]));
     root.appendChild(el('div', { class: 'btn-row' }, [
       checkbox('Visible before', layer.holdBefore, (v) => edit('hold', () => { layer.holdBefore = v; })),
@@ -812,7 +821,6 @@ export class Inspector {
       ['comet', 'Comet (thrown, bounces)'],
       ['sweep', 'Sweep (tag group by group)'],
       ['interference', 'Interference (two waves beating)'],
-      ['voronoi', 'Voronoi (drifting territories)'],
       ['solid', 'Solid colour'],
     ], (v) => edit('pattern type', () => { p.type = v; this.buildLayer(); }))));
     const FIT_MEANS = {
@@ -829,7 +837,6 @@ export class Inspector {
       comet: 'a whole number of throws',
       sweep: 'one pass through the tag groups',
       interference: 'a whole number of passes',
-      voronoi: 'one full drift',
       solid: 'a whole number of pulses',
       blink: 'a whole number of pulses',
     };
@@ -1260,24 +1267,6 @@ export class Inspector {
         + (beat ? ` These beat every ${beat.toFixed(2)} of the group.` : '')));
     }
 
-    if (p.type === 'voronoi') {
-      root.appendChild(slider('Territories', p.seeds, { min: 2, max: 10, step: 1 },
-        this.live(`${layer.id}:pvs`, 'territories', (v) => { p.seeds = Math.round(v); })));
-      root.appendChild(field('Drift time (ms)', numberInput(p.voronoiMs, 500, 120000, 100,
-        (v) => edit('drift time', () => {
-          p.voronoiMs = Math.max(500, Math.round(v));
-          this.buildLayer();
-        }))));
-      root.appendChild(slider('Drift distance', p.voronoiDrift, { min: 0, max: 0.6, step: 0.01 },
-        this.live(`${layer.id}:pvd`, 'drift', (v) => { p.voronoiDrift = v; })));
-      root.appendChild(field('Seed', numberInput(p.seed, 1, 9999, 1,
-        (v) => edit('seed', () => { p.seed = Math.round(v); this.buildLayer(); }))));
-      root.appendChild(hint('Each territory owns the lights nearest to it and drifts, so '
-        + 'lights change colour as the boundaries sweep over them. Uses the sparkle '
-        + 'palette below for its colours.'));
-      root.appendChild(this.buildPalette(layer, edit));
-    }
-
     if (p.type === 'blink' || p.type === 'solid') {
       root.appendChild(section('Pulse'));
       root.appendChild(field('Shape', selectBox(p.pulseShape || 'steady', [
@@ -1480,7 +1469,16 @@ export class Inspector {
     root.appendChild(field('Repeat', numberInput(layer.repeat || 1, 1, 200, 1,
       (v) => edit('repeat', () => { layer.repeat = Math.max(1, Math.round(v)); }))));
     root.appendChild(el('div', { class: 'btn-row' }, [
-      checkbox('Ping-pong', layer.pingpong, (v) => edit('pingpong', () => { layer.pingpong = v; })),
+      checkbox('Ping-pong', layer.pingpong, (v) => edit('pingpong', () => {
+        layer.pingpong = v;
+        // Ping-pong reverses every other repetition, so it does nothing at all
+        // at repeat 1 - the checkbox looked broken. Turning it on gives it
+        // something to reverse; turning it off puts back the 1 it came from,
+        // but leaves a deliberately larger count alone.
+        if (v && (layer.repeat || 1) < 2) layer.repeat = 2;
+        else if (!v && (layer.repeat || 1) === 2) layer.repeat = 1;
+        this.buildLayer();
+      })),
       checkbox('Hold after', layer.holdAfter, (v) => edit('hold', () => { layer.holdAfter = v; })),
     ]));
     root.appendChild(hint('Brightness comes from the keyframes on the Keyframe tab - '

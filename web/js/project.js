@@ -691,7 +691,7 @@ export function makePattern(over = {}) {
   return Object.assign({
     type: 'blink',        // blink | chase | sparkle | wavy | stack | marquee
                           // | fire | pinwheel | scanner | rain | plasma
-                          // | contagion | comet | sweep | interference | voronoi
+                          // | contagion | comet | sweep | interference
                           // | solid
     // One cycle of the pattern spans the clip. Without it a pattern's own
     // timing is unrelated to the layer's length, so stretching a clip left the
@@ -769,10 +769,6 @@ export function makePattern(over = {}) {
     sweepHold: false,      // groups stay lit once reached
     // interference - two wave fields multiplied
     wavelength2: 0.62,
-    // voronoi - drifting seeds, each owning its nearest lights
-    seeds: 4,
-    voronoiMs: 6000,
-    voronoiDrift: 0.22,
     // stack
     cols: 4,
     rows: 6,

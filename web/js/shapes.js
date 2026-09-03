@@ -290,10 +290,14 @@ export const SHAPES = [
       ctx.fill();
       const frac = Math.min(360, p.span) / 360;
       if (hasConic(ctx)) {
+        // The tail has to fall BEHIND the bright edge, and the layer rotates
+        // towards increasing angle - so the tail runs backwards from angle 0,
+        // not forwards. It used to fade forwards, which put the faint end in
+        // front and the bright line at the back: a radar sweeping the wrong way.
         const g = ctx.createConicGradient(0, 0, 0);
-        g.addColorStop(0, W(1));
-        g.addColorStop(Math.max(0.001, frac), W(0));
-        g.addColorStop(1, W(0));
+        g.addColorStop(0, W(0));
+        g.addColorStop(Math.max(0, 1 - frac), W(0));
+        g.addColorStop(1, W(1));
         applyAlphaMask(ctx, g);
       }
       if (p.feather > 0) applyAlphaMask(ctx, radialFeather(ctx, outer, p.feather));
