@@ -825,13 +825,19 @@ export class Inspector {
         (v) => write('transition seed', (n) => { n.seed = Math.round(v); }))));
     }
 
-    const each = Math.max(0, tr.durationMs || 0);
-    root.appendChild(hint(`Adds ${each} ms before and ${each} ms after, so this clip `
-      + `now runs ${Math.round(layerSpanMs(layer))} ms in total. The layer's own `
-      + 'length is unchanged.'));
-    if (each > 0 && each * 2 > Math.max(1, layer.durationMs)) {
-      root.appendChild(hint('That is longer than the layer itself - most of what you '
-        + 'see will be it arriving and leaving.'));
+    const span = Math.round(layerSpanMs(layer));
+    const each = Math.min(Math.max(0, tr.durationMs || 0), span / 2);
+    root.appendChild(hint(`Taken from inside the clip's ${span} ms: the first `
+      + `${Math.round(each)} ms arriving, the last ${Math.round(each)} ms leaving, `
+      + `${Math.round(span - each * 2)} ms fully lit in between. The clip does not `
+      + 'get longer, so it still lines up with everything around it.'));
+    if ((tr.durationMs || 0) * 2 > span) {
+      root.appendChild(el('div', {
+        class: 'warn',
+        text: `That is longer than half the clip, so it has been capped at `
+          + `${Math.round(span / 2)} ms each end - any more and the layer would `
+          + 'start leaving before it had finished arriving.',
+      }));
     }
   }
 

@@ -15,7 +15,7 @@ import {
   EASES,
   effectiveParams, hexToRgb, rgbToHex,
   layerInstancesAtTime, stateAtLocal,
-  transitionPhase, transitionMs,
+  transitionPhase,
 } from './project.js';
 
 const D2R = Math.PI / 180;
@@ -856,19 +856,14 @@ export class ShowRenderer {
     if (!p) return false;
     // localT lets the caller run one specific firing of an instanced layer;
     // without it the layer's own single firing is used
-    let t = localT == null ? patternTimeAt(layer, timeMs) : localT;
+    const t = localT == null ? patternTimeAt(layer, timeMs) : localT;
     if (t === null) return false;
     const alphaScale = st ? Math.max(0, Math.min(1, st.alpha)) : 1;
     if (alphaScale <= 0) return false;
 
-    // The transition reads the raw local time; the pattern itself runs on body
-    // time, so a dissolve-in does not also slide the pattern's own animation.
+    // The transition masks the ends of the clip; the pattern's own animation
+    // runs untouched underneath, so it keeps moving while it arrives and leaves.
     const coverage = coverageFor(layer, lights, transitionPhase(layer, t));
-    const td = transitionMs(layer);
-    if (td) {
-      const body = Math.max(1, layer.durationMs) * Math.max(1, layer.repeat || 1);
-      t = Math.max(0, Math.min(body, t - td));
-    }
 
     const mask = layerMask(layer, lights);
     const erasing = layer.blend === 'erase';

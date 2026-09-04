@@ -261,21 +261,30 @@ with the same duration. Nothing persistent is created, so nothing is orphaned
 when a layer moves or is deleted. Drift after a later one-sided edit remains
 possible, and remains acceptable.
 
-**Transitions extend the layer rather than eating into it**, and they extend it
-*forwards*. A 2000ms layer with 300ms transitions runs 2600ms:
+**Transitions eat into the layer rather than extending it.** *Reversed after
+using it.* The first plan extended the clip - a 2000ms layer with 300ms
+transitions occupied 2600ms - on the reasoning that the body should keep its
+full length. In practice that made everything hard to line up: the clip drawn
+on the timeline was no longer as long as the layer's duration said, so matching
+one layer to another became guesswork.
+
+A transition now takes its time from inside the clip. For a 1000ms layer with
+200ms transitions:
 
 | | |
 |---|---|
-| In | `[start, start + 300]` |
-| Body | `[start + 300, start + 2300]` |
-| Out | `[start + 2300, start + 2600]` |
+| Arriving | `[start, start + 200]` |
+| Fully lit | `[start + 200, start + 800]` |
+| Leaving | `[start + 800, start + 1000]` |
 
-The start does not move. Extending backwards would push a layer sitting at 0ms
-into negative time, and shows are meant to start at 0. "Start" keeps meaning
-"when this begins to appear".
+The clip is exactly as long as its duration, so two clips line up on the
+timeline exactly as they line up in the show. The layer's own animation runs
+untouched underneath and keeps moving while it arrives and leaves, rather than
+holding a frame.
 
-Consequences to handle: the layer's clip gets longer on the timeline the moment
-a transition is added, and the show's total duration can grow with it.
+A transition longer than half the clip is capped at half, since any more would
+have the layer leaving before it had finished arriving. At the cap it reaches
+full brightness for one instant in the middle.
 
 ---
 
