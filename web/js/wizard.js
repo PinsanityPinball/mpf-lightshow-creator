@@ -404,6 +404,23 @@ export class Wizard {
       + 'playfield after the layer is created.'));
   }
 
+  /**
+   * A numeric field that re-renders on change.
+   *
+   * This lived inside stepTiming as a local. The moment a second step needed
+   * one it threw a ReferenceError, and because a step builds into a container
+   * rather than returning markup, the step just stopped half-built with no
+   * visible error - the controls after it simply were not there.
+   */
+  num(label, value, min, max, step, onChange) {
+    const i = el('input', { type: 'number', value, min, max, step });
+    i.addEventListener('change', () => {
+      const v = Number(i.value);
+      if (!Number.isNaN(v)) { onChange(Math.max(min, Math.min(max, v))); this.render(); }
+    });
+    return field(label, i);
+  }
+
   stepMotion(b) {
     const L = this.layer;
     const turns = turnsOf(L);
@@ -434,6 +451,18 @@ export class Wizard {
       }, 'small'))));
     c.appendChild(hint('Turns are spread evenly across the clip by time, so the spin '
       + 'runs at a constant rate.'));
+    // Moved here from Timing to match the Layer panel: repeating the gesture is
+    // part of what the movement does.
+    c.appendChild(this.num('Repeat', L.repeat || 1, 1, 200, 1, (v) => { L.repeat = Math.round(v); }));
+    c.appendChild(el('div', { class: 'btn-row' }, [
+      checkbox('Ping-pong', L.pingpong, (v) => {
+        L.pingpong = v;
+        // nothing to reverse at repeat 1, so give it a second pass
+        if (v && (L.repeat || 1) < 2) L.repeat = 2;
+        else if (!v && (L.repeat || 1) === 2) L.repeat = 1;
+        this.render();
+      }),
+    ]));
   }
 
   stepSize(b) {
@@ -540,6 +569,13 @@ export class Wizard {
       + 'at the end. Turning both on keeps a bright middle rather than leaving the '
       + 'layer dark the whole way through.'));
     this.easingRow(c);
+    // Blend moved here from Timing to match the Layer panel: it is a colour
+    // question, not a clock one.
+    c.appendChild(field('Blend', selectBox(L.blend, [
+      ['add', 'Add (lights stack)'], ['normal', 'Normal (covers)'],
+      ['average', 'Average (blends colours)'],
+      ['erase', 'Erase (turns lights off)'],
+    ], (v) => { L.blend = v; })));
   }
 
   stepLights(b) {
@@ -609,35 +645,14 @@ export class Wizard {
     })));
 
     const c = this.custom(b, 'Timing settings');
-    const num = (label, value, min, max, step, onChange) => {
-      const i = el('input', { type: 'number', value, min, max, step });
-      i.addEventListener('change', () => {
-        const v = Number(i.value);
-        if (!Number.isNaN(v)) { onChange(Math.max(min, Math.min(max, v))); this.render(); }
-      });
-      return field(label, i);
-    };
     const nameInput = el('input', { type: 'text', value: L.name });
     nameInput.addEventListener('change', () => { L.name = nameInput.value; });
     c.appendChild(field('Name', nameInput));
-    c.appendChild(num('Start (ms)', L.startMs, 0, 600000, 10, (v) => { L.startMs = Math.round(v); }));
-    c.appendChild(num('Length (ms)', L.durationMs, 16, 600000, 10, (v) => { L.durationMs = Math.round(v); }));
-    c.appendChild(num('Repeat', L.repeat || 1, 1, 200, 1, (v) => { L.repeat = Math.round(v); }));
+    c.appendChild(this.num('Start (ms)', L.startMs, 0, 600000, 10, (v) => { L.startMs = Math.round(v); }));
+    c.appendChild(this.num('Length (ms)', L.durationMs, 16, 600000, 10, (v) => { L.durationMs = Math.round(v); }));
     c.appendChild(el('div', { class: 'btn-row' }, [
-      checkbox('Ping-pong', L.pingpong, (v) => {
-        L.pingpong = v;
-        // nothing to reverse at repeat 1, so give it a second pass
-        if (v && (L.repeat || 1) < 2) L.repeat = 2;
-        else if (!v && (L.repeat || 1) === 2) L.repeat = 1;
-        this.render();
-      }),
       checkbox('Visible after', L.holdAfter, (v) => { L.holdAfter = v; }),
     ]));
-    c.appendChild(field('Blend', selectBox(L.blend, [
-      ['add', 'Add (lights stack)'], ['normal', 'Normal (covers)'],
-      ['average', 'Average (blends colours)'],
-      ['erase', 'Erase (turns lights off)'],
-    ], (v) => { L.blend = v; })));
     c.appendChild(hint(`Runs ${L.startMs} to `
       + `${L.startMs + L.durationMs * Math.max(1, L.repeat || 1)} ms.`));
 

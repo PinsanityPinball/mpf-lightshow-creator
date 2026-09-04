@@ -2,7 +2,7 @@
 // all the wiring between the stage, the timeline and the inspector.
 
 import {
-  makeProject, normaliseProject, serialiseProject, makeKey, makeShowLayer,
+  makeProject, normaliseProject, serialiseProject, makeKey, makeLayer, makeShowLayer,
   projectDuration, frameCount, msPerFrame, invalidateKeys, stateAt, layerStateAtTime,
   scaleLayerTimes,
 } from './project.js';
@@ -63,6 +63,12 @@ class App {
     this.autoKey = false;
 
     this.selectedLayerId = null;
+    // Non-null while a path is being clicked out on the playfield.
+    this.drawPath = null;
+    // Extra layers selected alongside the primary. The primary is what the
+    // Layer panel edits and stays exactly as it was; these only matter to the
+    // timeline, where dragging one clip's end should be able to drag several.
+    this.alsoSelected = [];
     this.selectedKeyIndex = 0;
     this.pinnedLights = new Set();
     this.keyClipboard = null;
@@ -259,12 +265,178 @@ class App {
   }
 
   selectLayer(id) {
-    if (this.selectedLayerId === id) return;
+    const had = this.alsoSelected.length;
+    this.alsoSelected = [];
+    if (this.selectedLayerId === id) {
+      if (had) { this.rebuildHeads(); this.requestDraw(); }
+      return;
+    }
     this.selectedLayerId = id;
     this.selectedKeyIndex = 0;
     this.rebuildHeads();
     this.inspector.refresh();
     this.requestDraw();
+  }
+
+  /**
+   * Make an already-selected layer the primary one, keeping the selection.
+   *
+   * Grabbing one clip of several should edit that clip in the panel without
+   * throwing away the other clips you are about to drag with it.
+   */
+  makePrimary(id) {
+    if (id === this.selectedLayerId || !this.isSelected(id)) return;
+    const was = this.selectedLayerId;
+    this.alsoSelected = this.alsoSelected.filter((x) => x !== id);
+    if (was) this.alsoSelected.push(was);
+    this.selectedLayerId = id;
+    this.selectedKeyIndex = 0;
+    this.rebuildHeads();
+    this.inspector.refresh();
+    this.requestDraw();
+  }
+
+  /** Every layer id currently selected, primary first. */
+  selectedIds() {
+    const out = this.selectedLayerId ? [this.selectedLayerId] : [];
+    for (const id of this.alsoSelected) if (id !== this.selectedLayerId) out.push(id);
+    return out;
+  }
+
+  isSelected(id) {
+    return id === this.selectedLayerId || this.alsoSelected.includes(id);
+  }
+
+  /** Ctrl-click: add or remove one layer without disturbing the rest. */
+  toggleLayerSelection(id) {
+    if (!this.selectedLayerId) { this.selectLayer(id); return; }
+    if (id === this.selectedLayerId) {
+      // dropping the primary promotes the next one rather than selecting nothing
+      const next = this.alsoSelected.shift();
+      if (next) { this.selectedLayerId = next; this.selectedKeyIndex = 0; }
+    } else if (this.alsoSelected.includes(id)) {
+      this.alsoSelected = this.alsoSelected.filter((x) => x !== id);
+    } else {
+      this.alsoSelected.push(id);
+    }
+    this.rebuildHeads();
+    this.inspector.refresh();
+    this.requestDraw();
+  }
+
+  /** Shift-click: everything between the primary and the layer clicked. */
+  selectLayerRange(id) {
+    const ls = this.project.layers;
+    const a = ls.findIndex((l) => l.id === this.selectedLayerId);
+    const b = ls.findIndex((l) => l.id === id);
+    if (a < 0 || b < 0) { this.selectLayer(id); return; }
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    this.alsoSelected = ls.slice(lo, hi + 1)
+      .map((l) => l.id).filter((x) => x !== this.selectedLayerId);
+    this.rebuildHeads();
+    this.inspector.refresh();
+    this.requestDraw();
+  }
+
+  /** Show one of the top-level panels. Search needs this as much as a click. */
+  showTab(name) {
+    $$('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === name));
+    $$('.tab-panel').forEach((x) => x.classList.toggle('active', x.dataset.panel === name));
+  }
+
+  /**
+   * Start drawing a path by clicking the playfield.
+   *
+   * The path buttons make the shapes someone else thought of. This makes the
+   * one in your head: click where it starts, click where it goes next, and the
+   * clicks become the keyframes. The layer has no shape until you give it one,
+   * because where it travels is the thing being decided here.
+   */
+  startPathDraw() {
+    this.pushUndo('draw a path');
+    const layer = makeLayer({ name: 'Drawn path', shapeId: 'none', durationMs: 2000 });
+    layer.keys = [];
+    this.project.layers.push(layer);
+    this.selectedLayerId = layer.id;
+    this.alsoSelected = [];
+    this.selectedKeyIndex = 0;
+    this.drawPath = { id: layer.id };
+    this.showPath = true;
+    const t = $('#tglPath');
+    if (t) t.checked = true;
+    this.rebuildHeads();
+    this.inspector.refresh();
+    this.requestDraw();
+    this.syncDrawBanner();
+    status('Drawing a path: click where it goes. Enter or double-click to finish, '
+      + 'Esc to throw it away.', 'ok');
+  }
+
+  /** Show or hide the drawing banner to match the mode. */
+  syncDrawBanner() {
+    const b = $('#drawBanner');
+    if (!b) return;
+    b.classList.toggle('hidden', !this.drawPath);
+    if (!this.drawPath) return;
+    const layer = this.project.layers.find((l) => l.id === this.drawPath.id);
+    const n = layer ? layer.keys.length : 0;
+    b.querySelector('span').textContent = n < 1
+      ? 'Click where it starts.'
+      : (n === 1 ? 'Click where it goes next.'
+        : `${n} points. Click for another, or finish.`);
+  }
+
+  /** One click while drawing: another point on the route. */
+  addPathPoint(x, y) {
+    const layer = this.project.layers.find((l) => l.id === this.drawPath.id);
+    if (!layer) { this.drawPath = null; return; }
+    layer.keys.push(makeKey(0, { x, y, sx: 0.3, sy: 0.3 }));
+    // Evenly spaced in time, recomputed each click: the clip is the journey, so
+    // adding a point stretches the earlier ones rather than cramming the new
+    // one onto the end.
+    const n = layer.keys.length;
+    layer.keys.forEach((k, i) => { k.t = n === 1 ? 0 : i / (n - 1); });
+    invalidateKeys(layer);
+    this.selectedKeyIndex = n - 1;
+    this.onProjectEdit({ light: true });
+    this.inspector.refresh();
+    this.syncDrawBanner();
+  }
+
+  /** Keep what was drawn. */
+  finishPathDraw() {
+    if (!this.drawPath) return;
+    const layer = this.project.layers.find((l) => l.id === this.drawPath.id);
+    this.drawPath = null;
+    if (!layer) return;
+    if (layer.keys.length < 2) {
+      // One point is a position, not a path, and a layer with none draws
+      // nothing at all - either way there is nothing worth keeping.
+      this.project.layers = this.project.layers.filter((l) => l !== layer);
+      this.selectedLayerId = null;
+      status('Nothing drawn, so no layer was made.', 'ok');
+    } else {
+      status(`Drew a path with ${layer.keys.length} points. Pick a shape on the `
+        + 'Shape tab to send something along it.', 'ok');
+    }
+    this.rebuildHeads();
+    this.inspector.refresh();
+    this.onProjectEdit({});
+    this.syncDrawBanner();
+  }
+
+  /** Throw it away. */
+  cancelPathDraw() {
+    if (!this.drawPath) return;
+    const id = this.drawPath.id;
+    this.drawPath = null;
+    this.project.layers = this.project.layers.filter((l) => l.id !== id);
+    this.selectedLayerId = null;
+    this.rebuildHeads();
+    this.inspector.refresh();
+    this.onProjectEdit({});
+    this.syncDrawBanner();
+    status('Path discarded.', 'ok');
   }
 
   selectKey(i) {
@@ -404,6 +576,7 @@ class App {
       label,
       project: serialiseProject(this.project),
       selectedLayerId: this.selectedLayerId,
+      alsoSelected: this.alsoSelected.slice(),
       selectedKeyIndex: this.selectedKeyIndex,
     });
     if (this.undoStack.length > 80) this.undoStack.shift();
@@ -420,6 +593,7 @@ class App {
   applySnapshot(snap) {
     this.project = normaliseProject(snap.project);
     this.selectedLayerId = snap.selectedLayerId;
+    this.alsoSelected = (snap.alsoSelected || []).slice();
     this.selectedKeyIndex = snap.selectedKeyIndex;
     $('#showName').value = this.project.name;
     this.renderer.resize(this.project.aspect);
@@ -581,10 +755,15 @@ class App {
       });
 
       const row = el('div', {
-        class: 'head' + (layer.id === this.selectedLayerId ? ' sel' : ''),
+        class: 'head' + (layer.id === this.selectedLayerId ? ' sel' : '')
+          + (this.alsoSelected.includes(layer.id) ? ' also' : ''),
         draggable: 'true',
         title: layer.name + '  (double-click the name to rename)',
-        onclick: () => this.selectLayer(layer.id),
+        onclick: (e) => {
+          if (e.ctrlKey || e.metaKey) this.toggleLayerSelection(layer.id);
+          else if (e.shiftKey) this.selectLayerRange(layer.id);
+          else this.selectLayer(layer.id);
+        },
       }, [eye, swatch, nm]);
 
       row.addEventListener('dragstart', (e) => {
@@ -1320,19 +1499,23 @@ class App {
 
     const body = el('div', { class: 'keys' }, [
       rows('On the playfield', [
-        ['Left-drag', 'Move the whole layer - every keyframe together'],
-        ['Right-drag', 'Move the keyframe at the playhead, making one if needed'],
+        ['Left-drag', 'Move the whole layer - grab the shape, a keyframe, or the path'],
+        ['Right-drag a keyframe', 'Move just that one, wherever the playhead is'],
+        ['Right-drag the shape', 'Move the keyframe at the playhead, making one if needed'],
         ['Drag blue handle', 'Resize (left: whole layer, right: this keyframe)'],
         ['Drag orange handle', 'Rotate (left: whole layer, right: this keyframe)'],
         ['Shift + rotate', 'Snap to 15 degrees'],
         ['Shift + resize', 'Keep it square'],
         ['Click a light', 'Pin it, to watch its colour'],
+        ['Wheel', 'Zoom out to reach keyframes past the edge of the playfield'],
+        ['Middle-drag', 'Pan the view - Recentre puts it back'],
       ]),
       rows('Timeline', [
         ['Drag a clip', 'Move it in time'],
         ['Drag clip ends', 'Make it longer or shorter'],
         ['Drag a diamond', 'Retime that keyframe'],
         ['Double-click a clip', 'Add a keyframe there'],
+        ['Double-click the last diamond', 'Stretch the layer to the end of the show'],
         ['Double-click a name', 'Rename the layer'],
         ['Alt + drag', 'Ignore frame snapping'],
         ['Wheel', 'Scroll'],
@@ -1647,7 +1830,23 @@ class App {
     });
 
     $('#btnRoll').onclick = () => this.randomLayer();
+    $('#btnRecenter').onclick = () => this.stage.resetView();
+    $('#emptyDraw').onclick = () => this.startPathDraw();
+    $('#drawDone').onclick = () => this.finishPathDraw();
+    $('#drawCancel').onclick = () => this.cancelPathDraw();
     $('#btnHelp').onclick = () => this.shortcutsDialog();
+
+    // Minimised state sticks, because someone who has learnt these does not want
+    // to close the same box every time they open the app.
+    const help = $('#stageHelp');
+    let helpMin = false;
+    try { helpMin = localStorage.getItem('stageHelp') === 'min'; } catch (err) { /* private window */ }
+    help.classList.toggle('min', helpMin);
+    $('#stageHelpToggle').onclick = () => {
+      const now = !help.classList.contains('min');
+      help.classList.toggle('min', now);
+      try { localStorage.setItem('stageHelp', now ? 'min' : 'open'); } catch (err) { /* fine */ }
+    };
     $('#btnReloadMap').onclick = () => this.reloadLightMap();
     $('#btnNew').onclick = () => this.newShow();
     $('#btnOpen').onclick = () => this.openDialog();
@@ -1697,12 +1896,7 @@ class App {
     $('#btnDelLayer').onclick = () => this.deleteLayer();
 
     $$('.tab').forEach((t) => {
-      t.onclick = () => {
-        $$('.tab').forEach((x) => x.classList.remove('active'));
-        $$('.tab-panel').forEach((x) => x.classList.remove('active'));
-        t.classList.add('active');
-        $(`.tab-panel[data-panel="${t.dataset.tab}"]`).classList.add('active');
-      };
+      t.onclick = () => this.showTab(t.dataset.tab);
     });
 
     $('#modalClose').onclick = hideModal;
@@ -1748,6 +1942,10 @@ class App {
         e.preventDefault();
         if (e.shiftKey) this.redo(); else this.undo();
         return;
+      }
+      if (this.drawPath) {
+        if (e.key === 'Escape') { e.preventDefault(); this.cancelPathDraw(); return; }
+        if (e.key === 'Enter') { e.preventDefault(); this.finishPathDraw(); return; }
       }
       if (ctrl && e.key.toLowerCase() === 's') {
         e.preventDefault();

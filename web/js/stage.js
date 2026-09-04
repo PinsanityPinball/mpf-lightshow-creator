@@ -3,9 +3,26 @@
 
 import { shapeExtent } from './shapes.js';
 import { layerStateAtTime, stateAt, invalidateKeys, effectiveParams } from './project.js';
+import { status } from './ui.js';
 import { drawLights, colorsToHex } from './render.js';
 
 const D2R = Math.PI / 180;
+// A keyframe diamond is drawn 5px from centre to point; this is how close the
+// pointer has to be to grab one, with a little room for a shaky hand.
+const KEY_GRAB = 9;
+// The path line is 1.25px wide and dashed, so it needs a wider catchment than
+// it looks like it does.
+const PATH_GRAB = 6;
+
+/** Distance from a point to a line segment. */
+function segDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len = dx * dx + dy * dy;
+  let t = len ? ((px - ax) * dx + (py - ay) * dy) / len : 0;
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  return dist(px, py, ax + dx * t, ay + dy * t);
+}
 const HANDLE = 6;
 
 export class Stage {
@@ -15,10 +32,22 @@ export class Stage {
     this.ctx = canvas.getContext('2d');
     this.cw = 0;
     this.ch = 0;
+    // Zooming out shows the space around the playfield. Presets legitimately
+    // put keyframes past the edge - a sweep starts at y 1.08 so it enters from
+    // off-field - and at 1:1 those sit outside the canvas where they cannot be
+    // clicked. 1 is the playfield filling the canvas exactly, so the default is
+    // pixel-for-pixel what it always was.
+    this.zoom = 1;
+    this.panX = 0;
+    this.panY = 0;
     this.drag = null;
     this.hoverLight = -1;
     this.onionCanvas = document.createElement('canvas');
 
+    canvas.addEventListener('dblclick', () => {
+      if (this.app.drawPath) this.app.finishPathDraw();
+    });
+    canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
     window.addEventListener('pointerup', (e) => this.onUp(e));
@@ -51,7 +80,39 @@ export class Stage {
 
   pointer(e) {
     const r = this.canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    // Undo the view transform, so every hit test downstream keeps working in
+    // playfield pixels and none of them has to know about zoom.
+    return {
+      x: (e.clientX - r.left - this.panX) / this.zoom,
+      y: (e.clientY - r.top - this.panY) / this.zoom,
+    };
+  }
+
+  /** Wheel over the playfield zooms about the pointer. */
+  onWheel(e) {
+    e.preventDefault();
+    const r = this.canvas.getBoundingClientRect();
+    const cx = e.clientX - r.left;
+    const cy = e.clientY - r.top;
+    // the playfield point under the cursor, which must not move
+    const ux = (cx - this.panX) / this.zoom;
+    const uy = (cy - this.panY) / this.zoom;
+    const next = Math.max(0.3, Math.min(4, this.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    this.zoom = next;
+    this.panX = cx - ux * next;
+    this.panY = cy - uy * next;
+    // Zooming back through 1:1 tidies itself up, but that only helps if you
+    // happen to land there - hence the Recentre button, which always does.
+    if (Math.abs(this.zoom - 1) < 0.02 && !this.panX && !this.panY) this.zoom = 1;
+    this.draw();
+  }
+
+  /** Back to the playfield filling the canvas. */
+  resetView() {
+    this.zoom = 1;
+    this.panX = 0;
+    this.panY = 0;
+    this.draw();
   }
 
   /** Current on-screen state of a layer, or null if it is not showing. */
@@ -136,6 +197,33 @@ export class Stage {
   // ------------------------------------------------------------ input
 
   onDown(e) {
+    // While drawing a path every click is a point on it. Nothing else on the
+    // playfield does anything until the path is finished or thrown away, so
+    // there is no chance of half-drawing one and wondering why the shape moved.
+    if (this.app.drawPath && (e.button === 0 || e.button === 2)) {
+      e.preventDefault();
+      const p = this.pointer(e);
+      this.app.addPathPoint(offField(p.x / this.cw), offField(p.y / this.ch));
+      return;
+    }
+
+    // Middle button pans the view. It is the one gesture that moves the camera
+    // rather than the show, so it deliberately does not touch the project and
+    // takes no undo step.
+    if (e.button === 1) {
+      e.preventDefault();
+      // Start the gesture before asking for capture: capture is an optimisation
+      // that keeps the drag alive outside the canvas, and if it throws the pan
+      // should still work rather than the whole gesture being lost.
+      this.drag = {
+        mode: 'pan',
+        fromX: e.clientX, fromY: e.clientY,
+        panX: this.panX, panY: this.panY,
+      };
+      try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+      this.canvas.style.cursor = 'grabbing';
+      return;
+    }
     // Left moves the whole layer, right edits one keyframe. Which mouse button
     // you press is a clearer way to say which you meant than a mode checkbox
     // plus wherever the playhead happens to be sitting.
@@ -173,16 +261,94 @@ export class Stage {
       }
     }
 
+    // Right-clicking a keyframe diamond means "move this one". It used to fall
+    // straight through to keyForEdit, which works off the playhead - so unless
+    // the playhead happened to be sitting on that keyframe it made a brand new
+    // one where the playhead was, and the keyframe you clicked never moved.
+    if (!wholeLayer && layer) {
+      let ki = this.hitKeyframe(layer, x, y);
+      // A keyframe sitting exactly where the shape is right now cannot be the
+      // one you meant to reach for - there is nothing to distinguish it from
+      // the shape itself. That happens constantly on a large shape, where the
+      // obvious place to click is the middle and the diamonds are all there,
+      // and it made right-click move some other keyframe instead of adding one
+      // at the playhead. Ambiguous means playhead, which is the older gesture.
+      if (ki >= 0) {
+        const now = this.liveState(layer);
+        if (now && dist(x, y, now.x * this.cw, now.y * this.ch) <= KEY_GRAB) ki = -1;
+      }
+      if (ki >= 0) {
+        const k = layer.keys[ki];
+        app.pushUndo('move keyframe');
+        app.selectKey(ki);
+        // Show the keyframe being edited rather than whatever the playhead was
+        // on, and keep targetKey resolving to the same one.
+        app.setTime(layer.startMs + k.t * Math.max(1, layer.durationMs));
+        this.drag = {
+          mode: 'move', layer, all: false, keyIndex: ki,
+          grabX: x / this.cw - k.x,
+          grabY: y / this.ch - k.y,
+          baseKeys: layer.keys.map((kk) => ({ x: kk.x, y: kk.y })),
+          baseX: k.x, baseY: k.y,
+        };
+        return;
+      }
+    }
+
+    // Left-dragging anywhere on the path - a keyframe or the line between two -
+    // moves the whole layer. The path is often the only part of a layer near the
+    // pointer, and having it be scenery you cannot grab made moving a layer mean
+    // hunting for wherever the shape happened to be at the playhead.
+    if (wholeLayer && layer && (this.hitKeyframe(layer, x, y) >= 0 || this.hitPath(layer, x, y))) {
+      const st = this.liveState(layer);
+      // With no live state - the playhead sitting outside the clip - measure
+      // from the point grabbed rather than from the middle of the playfield,
+      // which would throw the delta off by however far the layer is from centre.
+      const bx = st ? st.x : x / this.cw;
+      const by = st ? st.y : y / this.ch;
+      app.pushUndo('move');
+      this.drag = {
+        mode: 'move', layer, all: true,
+        grabX: x / this.cw - bx,
+        grabY: y / this.ch - by,
+        baseKeys: layer.keys.map((k) => ({ x: k.x, y: k.y })),
+        baseX: bx, baseY: by,
+      };
+      return;
+    }
+
     const hit = this.hitLayer(x, y);
     if (hit) {
       if (!layer || hit.id !== layer.id) app.selectLayer(hit.id);
       const st = this.liveState(hit);
+
+      // With the playhead off the clip there is no time for a keyframe to be
+      // at, and keyForEdit used to fall back to whichever keyframe happened to
+      // be selected - so a right-drag quietly moved a keyframe somewhere else
+      // in the clip, at a time you were not looking at. Refusing and saying why
+      // is better than an edit nobody asked for.
+      if (!wholeLayer && app.layerPhase(hit) === null) {
+        status('The playhead is not over this clip, so there is no point in it to '
+          + 'put a keyframe. Move the playhead onto the clip first.', 'err');
+        return;
+      }
+
       // pushUndo first: a right-drag inserts a keyframe through targetKey, and a
       // snapshot taken after that already contains it, so undo could not remove it
       app.pushUndo('move');
       // Right button (or auto-key) edits the keyframe at the playhead, creating
       // one if there is not one there yet. Left moves the whole layer.
+      const had = hit.keys.length;
       const key = wholeLayer ? null : app.keyForEdit(hit);
+      // Whether this added one or picked up the one already there is the
+      // difference people cannot see, and "why did it not add a keyframe?"
+      // is exactly that question.
+      if (!wholeLayer && key) {
+        const ms = Math.round(hit.startMs + key.t * Math.max(1, hit.durationMs));
+        status(hit.keys.length > had
+          ? `Added a keyframe at ${ms} ms.`
+          : `Moving the keyframe already at ${ms} ms.`, 'ok');
+      }
       this.drag = {
         mode: 'move',
         layer: hit,
@@ -197,6 +363,15 @@ export class Stage {
         baseX: key ? key.x : (st ? st.x : 0.5),
         baseY: key ? key.y : (st ? st.y : 0.5),
       };
+      return;
+    }
+
+    // Right-clicking the playfield with no layer selected means "I want to make
+    // something here", and the only thing that can be made by pointing at the
+    // playfield is a path. The first click is its first point.
+    if (e.button === 2 && !app.selectedLayer()) {
+      app.startPathDraw();
+      app.addPathPoint(offField(x / this.cw), offField(y / this.ch));
       return;
     }
 
@@ -230,6 +405,8 @@ export class Stage {
           if (dist(x, y, h.rotate.x, h.rotate.y) <= HANDLE + 4) cursor = 'grab';
           else if (dist(x, y, h.scale.x, h.scale.y) <= HANDLE + 4) cursor = 'nwse-resize';
           else if (this.hitLayer(x, y)) cursor = 'move';
+          else if (this.hitKeyframe(layer, x, y) >= 0) cursor = 'move';
+          else if (this.hitPath(layer, x, y)) cursor = 'move';
         }
       } else if (this.hitLayer(x, y)) cursor = 'move';
       this.canvas.style.cursor = cursor;
@@ -237,20 +414,36 @@ export class Stage {
     }
 
     const d = this.drag;
+    if (d.mode === 'pan') {
+      // Raw client pixels, not playfield units: the camera moves in screen
+      // space, so dividing by zoom here would make panning slower as you zoom in.
+      this.panX = d.panX + (e.clientX - d.fromX);
+      this.panY = d.panY + (e.clientY - d.fromY);
+      this.draw();
+      return;
+    }
     const layer = d.layer;
 
     if (d.mode === 'move') {
-      const nx = clamp01(x / this.cw - d.grabX);
-      const ny = clamp01(y / this.ch - d.grabY);
+      // Not clamp01: keyframes off the edge are a real technique - a sweep
+      // starts off-field so it enters from outside - and clamping snapped any
+      // such keyframe back onto the playfield the moment it was touched.
+      const nx = offField(x / this.cw - d.grabX);
+      const ny = offField(y / this.ch - d.grabY);
       if (d.all) {
         const dx = nx - d.baseX;
         const dy = ny - d.baseY;
         layer.keys.forEach((k, i) => {
-          k.x = clamp01(d.baseKeys[i].x + dx);
-          k.y = clamp01(d.baseKeys[i].y + dy);
+          k.x = offField(d.baseKeys[i].x + dx);
+          k.y = offField(d.baseKeys[i].y + dy);
         });
       } else {
-        const key = app.targetKey(layer);
+        // A drag that started on a diamond stays on that diamond. Frame snapping
+        // can nudge the playhead just past keyAtPlayhead's half-frame tolerance,
+        // and then targetKey would quietly start making a new keyframe mid-drag.
+        const key = (d.keyIndex != null && layer.keys[d.keyIndex])
+          ? layer.keys[d.keyIndex]
+          : app.targetKey(layer);
         if (key) { key.x = nx; key.y = ny; }
       }
     } else if (d.mode === 'rotate') {
@@ -296,6 +489,11 @@ export class Stage {
 
   onUp(e) {
     if (!this.drag) return;
+    if (this.drag.mode === 'pan') {
+      this.drag = null;
+      this.canvas.style.cursor = 'crosshair';
+      return;                      // nothing changed in the project, so no redraw churn
+    }
     this.drag = null;
     this.app.onProjectEdit({});
     this.app.refreshInspector();
@@ -307,7 +505,19 @@ export class Stage {
     const ctx = this.ctx;
     const app = this.app;
     const { cw, ch } = this;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+    // Clear and fill the whole canvas untransformed, so the area outside the
+    // playfield reads as surround rather than as playable space.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
+    ctx.fillStyle = this.zoom === 1 ? '#000' : '#05070a';
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Everything from here down is drawn in playfield pixels, exactly as it was
+    // before zoom existed - the transform does the work instead.
+    ctx.setTransform(dpr * this.zoom, 0, 0, dpr * this.zoom,
+      dpr * this.panX, dpr * this.panY);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
 
@@ -380,10 +590,56 @@ export class Stage {
     ctx.restore();
   }
 
+  /**
+   * Which keyframe diamond is under the pointer, or -1.
+   *
+   * Only the ones drawPaths actually draws: grabbing a marker that is not on
+   * screen would be worse than not grabbing one at all. Nearest wins, so
+   * overlapping keyframes pick the one you are closest to rather than the
+   * first in the list.
+   */
+  hitKeyframe(layer, x, y) {
+    if (!this.app.showPath || !layer || layer.kind !== 'shape') return -1;
+    let best = -1;
+    let bestD = KEY_GRAB;
+    for (let i = 0; i < layer.keys.length; i++) {
+      const d = dist(x, y, layer.keys[i].x * this.cw, layer.keys[i].y * this.ch);
+      if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  /**
+   * True when the pointer is on the drawn path line.
+   *
+   * Sampled the same 96 ways drawPaths samples it, so what you can grab is
+   * exactly what you can see - easing included, since the line bunches up where
+   * the movement slows and a straight-line test would miss it there.
+   */
+  hitPath(layer, x, y) {
+    if (!this.app.showPath || !layer || layer.kind !== 'shape') return false;
+    if (layer.keys.length < 2) return false;
+    const steps = 96;
+    let px = 0;
+    let py = 0;
+    for (let i = 0; i <= steps; i++) {
+      const st = stateAt(layer, i / steps);
+      const cx = st.x * this.cw;
+      const cy = st.y * this.ch;
+      if (i > 0 && segDist(x, y, px, py, cx, cy) <= PATH_GRAB) return true;
+      px = cx;
+      py = cy;
+    }
+    return false;
+  }
+
   drawPaths() {
     const app = this.app;
     const layer = app.selectedLayer();
     if (!layer || layer.kind !== 'shape') return;
+    // Number the points while they are being placed, so the order they will be
+    // travelled in is visible rather than inferred from a line.
+    const numbering = !!(app.drawPath && app.drawPath.id === layer.id);
     const ctx = this.ctx;
     // indexed as stored, so the highlighted diamond matches selectedKeyIndex
     const keys = layer.keys;
@@ -415,6 +671,11 @@ export class Stage {
       ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.lineWidth = 1;
       ctx.stroke();
+      if (numbering) {
+        ctx.fillStyle = '#dde4ee';
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.fillText(String(i + 1), x + 7, y - 6);
+      }
     });
     ctx.restore();
   }
@@ -461,4 +722,7 @@ function dot(ctx, x, y, color, r = HANDLE) {
 }
 
 const dist = (x1, y1, x2, y2) => Math.hypot(x1 - x2, y1 - y2);
+// How far past the playfield a keyframe may sit. Half a field each way is more
+// than any preset uses and still far short of losing something off in space.
+const offField = (v) => Math.max(-0.5, Math.min(1.5, v));
 const clamp01 = (v) => Math.max(0, Math.min(1, v));

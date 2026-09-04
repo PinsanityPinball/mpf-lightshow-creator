@@ -11,11 +11,12 @@ import {
   animateParam, unanimateParam, effectiveParams,
   setScaleRange, scaleRange, scaleIsUniform, fadeState, setFades,
   setRotationRange, rotationRange, setColourRange, colourRange,
-  TRANSITIONS, makeTransition, layerSpanMs,
+  TRANSITIONS, makeTransition, layerSpanMs, convertLayerKind,
 } from './project.js';
 import { showCoverage, layerMask } from './render.js';
 import {
-  PATHS, applyPath, pathOptions, TRANSFORMS, randomStart, randomEnd, SIZE_PRESETS, applySize,
+  PATHS, PATH_BY_ID, applyPath, pathOptions, TRANSFORMS, randomStart, randomEnd,
+  SIZE_PRESETS, applySize,
   turnsOf, setTurns,
 } from './paths.js';
 import { orderedTargets } from './project.js';
@@ -27,6 +28,77 @@ import {
 const THUMB = 34;
 
 /** Small white-on-black preview of a shape with its default parameters. */
+/**
+ * A picture of where a path actually goes.
+ *
+ * The path buttons were text in a row, and clicking one silently rewrote every
+ * keyframe position - so the only way to find out what "Sides" or "Infinity"
+ * meant was to pick it and undo. The route is cheap to draw: every path can
+ * already produce its own points, which is exactly what gets baked into the
+ * keyframes, so the thumbnail cannot disagree with the result.
+ */
+export function pathThumb(pathId, opts) {
+  const w = 42;
+  const h = 30;
+  const c = document.createElement('canvas');
+  c.width = w * 2; c.height = h * 2;          // drawn at 2x for a crisp line
+  c.style.width = w + 'px';
+  c.style.height = h + 'px';
+  const ctx = c.getContext('2d');
+  ctx.scale(2, 2);
+  ctx.fillStyle = '#05070a';
+  ctx.fillRect(0, 0, w, h);
+
+  const def = PATH_BY_ID.get(pathId);
+  if (!def) return c;
+  let pts = [];
+  try {
+    pts = def.points(pathId === 'sides' ? 4 : 48, opts) || [];
+  } catch (err) {
+    return c;                                  // a path that will not plot draws nothing
+  }
+  if (pts.length < 2) {
+    // "None" has no route: say so rather than showing an empty box.
+    ctx.strokeStyle = '#48566a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, 3.5, 0, Math.PI * 2);
+    ctx.stroke();
+    return c;
+  }
+
+  // Fit the route to the tile rather than assuming it sits inside 0..1: paths
+  // deliberately overshoot the playfield, and a clipped thumbnail is a lie.
+  let lo = { x: Infinity, y: Infinity };
+  let hi = { x: -Infinity, y: -Infinity };
+  for (const p of pts) {
+    lo.x = Math.min(lo.x, p.x); lo.y = Math.min(lo.y, p.y);
+    hi.x = Math.max(hi.x, p.x); hi.y = Math.max(hi.y, p.y);
+  }
+  const pad = 4;
+  const sx = (w - pad * 2) / Math.max(1e-6, hi.x - lo.x);
+  const sy = (h - pad * 2) / Math.max(1e-6, hi.y - lo.y);
+  const s = Math.min(sx, sy);
+  const ox = pad + ((w - pad * 2) - (hi.x - lo.x) * s) / 2;
+  const oy = pad + ((h - pad * 2) - (hi.y - lo.y) * s) / 2;
+  const X = (p) => ox + (p.x - lo.x) * s;
+  const Y = (p) => oy + (p.y - lo.y) * s;
+
+  ctx.strokeStyle = '#4fc3f7';
+  ctx.lineWidth = 1.2;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p))));
+  ctx.stroke();
+
+  // Where it starts, so direction is readable at a glance.
+  ctx.fillStyle = '#ffb74d';
+  ctx.beginPath();
+  ctx.arc(X(pts[0]), Y(pts[0]), 2, 0, Math.PI * 2);
+  ctx.fill();
+  return c;
+}
+
 export function shapeThumb(shapeId, params) {
   const c = document.createElement('canvas');
   c.width = THUMB; c.height = THUMB;
@@ -84,6 +156,9 @@ export class Inspector {
     this.buildKey();
     this.buildShow();
     this.buildExport();
+    // Last: the search index reads the other panels straight off the page, so
+    // they have to exist before it can be asked anything.
+    this.buildFind();
   }
 
   // ------------------------------------------------------------ layer
@@ -142,6 +217,32 @@ export class Inspector {
       })),
     ]));
 
+    // What kind of layer this is, and a way to change your mind. Imported shows
+    // replay baked frames, so they are not something the other kinds convert to.
+    if (layer.kind !== 'show') {
+      const kindSel = selectBox(layer.kind === 'pattern' ? 'pattern' : 'shape', [
+        ['shape', 'Shape - draws and moves something'],
+        ['pattern', 'Pattern - drives the lights directly'],
+      ], (v) => edit('layer type', () => {
+        convertLayerKind(layer, v);
+        this._idx = null;             // the tabs just changed, so the index has
+        this.layerTab = null;         // and whichever tab was open may be gone
+        this.buildLayer();
+        app.rebuildHeads();
+      }));
+      // Changing this rebuilds the whole tab set, so anything walking the panel
+      // needs to know not to poke it the way it pokes an ordinary dropdown.
+      kindSel.dataset.structural = '1';
+      root.appendChild(field('Layer type', kindSel));
+      root.appendChild(hint(layer.kind === 'pattern'
+        ? 'A pattern sets light colours straight off, so it has no shape to draw '
+          + 'and no path to travel - that is why there are no Shape, Path, Motion '
+          + 'or Size tabs. Switch to Shape to get them.'
+        : 'A shape is drawn on the playfield and sampled by the lights it covers, '
+          + 'so it has a shape, a path and a size. Switch to Pattern to set light '
+          + 'colours directly instead.'));
+    }
+
     // ---- sub-tabs
     const tabs = this.layerTabs(layer);
     if (!tabs.some(([id]) => id === this.layerTab)) this.layerTab = tabs[0][0];
@@ -158,7 +259,13 @@ export class Inspector {
     const pane = el('div', { class: 'subpane' });
     root.appendChild(pane);
 
-    switch (this.layerTab) {
+    this.buildPane(this.layerTab, pane, layer, edit);
+    this.flashSetting(pane);
+  }
+
+  /** One tab's contents. Split out so the search index can build them all. */
+  buildPane(id, pane, layer, edit) {
+    switch (id) {
       case 'pattern': this.buildPatternLayer(pane, layer, edit); break;
       case 'show': this.buildShowLayer(pane, layer, edit); break;
       case 'lights': this.paneLights(pane, layer, edit); break;
@@ -168,6 +275,178 @@ export class Inspector {
       case 'size': this.paneSize(pane, layer, edit); break;
       case 'timing': this.paneTiming(pane, layer, edit); break;
       default: this.paneShape(pane, layer, edit); break;
+    }
+  }
+
+  /**
+   * Every setting this layer has, and which tab it is on.
+   *
+   * Built by actually building each tab into a detached node and reading the
+   * labels back, rather than from a hand-written list. A list would be wrong
+   * the first time a control moved - and controls have moved a lot - whereas
+   * this cannot drift: if it is on a tab, it is in here.
+   */
+  searchIndex(layer) {
+    const key = layer.id + ':' + layer.kind + ':' + this.layerTabs(layer).length;
+    if (this._idxKey === key && this._idx) return this._idx;
+    const noop = (label, fn) => fn();          // building must not touch undo
+    const out = [];
+    const seen = new Set();
+    // Four kinds of label, because the panes build four kinds of row. Size and
+    // Path use rangeRow, which has no <label> at all - indexing only fields
+    // left both of those tabs completely unsearchable.
+    const SEL = '.sec, .field > label, label.chk, .wiz-range-label > span';
+    for (const [id, title] of this.layerTabs(layer)) {
+      const box = el('div');
+      try {
+        this.buildPane(id, box, layer, noop);
+      } catch (err) {
+        continue;   // a pane that cannot build has nothing to offer the index
+      }
+      let group = title;
+      // Four kinds of label, because the panes build four kinds of row. Size
+      // and Path use rangeRow, which has no <label> at all - indexing only
+      // fields left both of those tabs completely unsearchable.
+      for (const node of box.querySelectorAll(SEL)) {
+        const text = (node.textContent || '').replace(/◆/g, '').trim();
+        if (!text) continue;
+        // A section heading is a group, and worth finding in its own right:
+        // "size" and "path" are what someone types before they know the
+        // name of the control they are after.
+        if (node.classList.contains('sec')) group = text;
+        const dedupe = id + '|' + text;
+        if (seen.has(dedupe)) continue;
+        seen.add(dedupe);
+        out.push({ top: 'layer', tab: id, tabTitle: title, group, label: text });
+      }
+    }
+    // The other top-level panels are always built, so they can be read straight
+    // off the page rather than rebuilt - and a setting on the Show tab is just
+    // as hard to find as one on a sub-tab.
+    for (const [top, title, domId] of
+      [['key', 'Keyframe', 'panelKey'], ['show', 'Show', 'panelShow'],
+        ['export', 'Export', 'panelExport']]) {
+      const box = document.getElementById(domId);
+      if (!box) continue;
+      let group = title;
+      for (const node of box.querySelectorAll(SEL)) {
+        const text = (node.textContent || '').replace(/\u25c6/g, '').trim();
+        if (!text) continue;
+        if (node.classList.contains('sec')) group = text;
+        const dedupe = top + '|' + text;
+        if (seen.has(dedupe)) continue;
+        seen.add(dedupe);
+        out.push({ top, tab: null, tabTitle: title, group, label: text });
+      }
+    }
+
+    this._idxKey = key;
+    this._idx = out;
+    return out;
+  }
+
+  /**
+   * The "find a setting" box.
+   *
+   * Seven tab names is seven guesses about where someone else filed a thing.
+   * Searching sidesteps the taxonomy: type what you want to change and it tells
+   * you which tab it is on, then takes you there.
+   */
+  /** The search box lives above the tabs, so it can reach all of them. */
+  buildFind() {
+    const host = document.getElementById('findWrap');
+    if (!host) return;
+    const layer = this.app.selectedLayer();
+    host.textContent = '';
+    if (!layer) return;
+    this.buildSearch(host, layer);
+  }
+
+  buildSearch(root, layer) {
+    const wrap = el('div', { class: 'find' });
+    const input = el('input', {
+      type: 'text', class: 'find-box', placeholder: 'Find a setting...',
+      value: this.findTerm || '',
+    });
+    const results = el('div', { class: 'find-hits' });
+    wrap.appendChild(input);
+    wrap.appendChild(results);
+
+    const run = () => {
+      const q = (input.value || '').trim().toLowerCase();
+      this.findTerm = input.value;
+      results.textContent = '';
+      if (q.length < 2) return;
+      const all = this.searchIndex(layer);
+      const scored = all
+        .map((e) => {
+          const l = e.label.toLowerCase();
+          const g = e.group.toLowerCase();
+          // a label that starts with what you typed is what you meant
+          if (l.startsWith(q)) return { e, rank: 0 };
+          if (l.includes(q)) return { e, rank: 1 };
+          if (g.includes(q)) return { e, rank: 2 };
+          return null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.rank - b.rank)
+        .slice(0, 8);
+
+      if (!scored.length) {
+        results.appendChild(el('div', { class: 'find-none', text: 'Nothing matches that.' }));
+        return;
+      }
+      for (const { e } of scored) {
+        const row = el('div', { class: 'find-hit' }, [
+          el('span', { class: 'grow', text: e.label }),
+          el('span', { class: 'find-where', text: e.tabTitle }),
+        ]);
+        row.onclick = () => {
+          this.findTerm = '';
+          input.value = '';
+          results.textContent = '';
+          this.app.showTab(e.top);
+          if (e.top === 'layer') {
+            this.layerTab = e.tab;
+            this.pendingFlash = e.label;
+            this.buildLayer();
+          } else {
+            // those panels are already built, so flash where they stand
+            this.pendingFlash = e.label;
+            this.flashSetting(document.getElementById(
+              { key: 'panelKey', show: 'panelShow', export: 'panelExport' }[e.top]));
+          }
+        };
+        results.appendChild(row);
+      }
+    };
+
+    input.addEventListener('input', run);
+    // Escape clears rather than leaving a stale result list behind the panel
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { input.value = ''; run(); }
+    });
+    root.appendChild(wrap);
+    if (this.findTerm) run();
+  }
+
+  /** Briefly mark the control someone searched for, so they can see it. */
+  flashSetting(pane) {
+    const want = this.pendingFlash;
+    this.pendingFlash = null;
+    if (!want || !pane) return;
+    // The same four kinds of label the index records, or a result would switch
+    // tabs and then highlight nothing - a section heading is a perfectly good
+    // thing to have searched for.
+    const SEL = '.sec, .field > label, label.chk, .wiz-range-label > span';
+    for (const node of pane.querySelectorAll(SEL)) {
+      if ((node.textContent || '').replace(/◆/g, '').trim() !== want) continue;
+      const target = (node.classList.contains('chk') || node.classList.contains('sec'))
+        ? node : node.parentElement;
+      target.classList.add('found');
+      setTimeout(() => target.classList.remove('found'), 1600);
+      target.scrollIntoView({ block: 'center' });
+      return;
     }
   }
 
@@ -238,7 +517,7 @@ export class Inspector {
 
         const toggle = el('button', {
           class: 'anim-btn' + (animated ? ' on' : ''),
-          html: '&#9670;',
+          text: (animated ? '\u25cf' : '\u25cb') + ' changes',
           title: animated
             ? 'Animated - click to freeze at the current value'
             : 'Animate this over the clip',
@@ -522,15 +801,22 @@ export class Inspector {
     };
 
     root.appendChild(section('Motion path'));
-    const pathRow = el('div', { class: 'btn-row' });
+    root.appendChild(hint('Picking one replaces where this layer goes. Colour, size, '
+      + 'rotation and any animated shape settings are kept and resampled onto the '
+      + 'new route - and Ctrl+Z puts the old one back.'));
+    const previewOpts = Object.assign({}, state.opts, {
+      aspect: app.project.aspect || 0.5,
+    });
+    const pathRow = el('div', { class: 'path-grid' });
     for (const p of PATHS) {
-      pathRow.appendChild(button(p.label, () => edit('path: ' + p.label, () => apply(p.id)),
-        'small' + (state.id === p.id ? ' on' : '')));
+      const on = state.id === p.id;
+      pathRow.appendChild(el('button', {
+        class: 'path-pick' + (on ? ' on' : ''),
+        title: `${p.label} - the orange dot is where the layer starts`,
+        onclick: () => edit('path: ' + p.label, () => apply(p.id)),
+      }, [pathThumb(p.id, previewOpts), el('span', { text: p.label })]));
     }
     root.appendChild(pathRow);
-    root.appendChild(hint('A path rewrites only where the shape goes. Colour, size, '
-      + 'rotation and any animated shape params are resampled, so the rest of your '
-      + 'setup survives.'));
 
     // Only the settings this path reads, same as the wizard offers.
     if (state.id && state.id !== 'none') {
@@ -633,6 +919,31 @@ export class Inspector {
       + 'right-drag moves the keyframe at the playhead and makes one if there is '
       + 'not one there. Same for the rotate and scale handles. Double-click a clip '
       + 'in the timeline to add a keyframe.'));
+
+    // Repeating the gesture is a motion question, not a clock one. Repeat and
+    // Ping-pong stay together because ticking Ping-pong sets Repeat to 2 - split
+    // across two tabs, that would be a number changing where you cannot see it.
+    root.appendChild(section('Repeat'));
+    root.appendChild(field('Repeat', numberInput(layer.repeat || 1, 1, 200, 1,
+      (v) => edit('repeat', () => { layer.repeat = Math.max(1, Math.round(v)); }))));
+    root.appendChild(el('div', { class: 'btn-row' }, [
+      checkbox('Ping-pong', layer.pingpong, (v) => edit('pingpong', () => {
+        layer.pingpong = v;
+        // Ping-pong reverses every other repetition, so it does nothing at all
+        // at repeat 1 - the checkbox looked broken. Turning it on gives it
+        // something to reverse; turning it off puts back the 1 it came from,
+        // but leaves a deliberately larger count alone.
+        if (v && (layer.repeat || 1) < 2) layer.repeat = 2;
+        else if (!v && (layer.repeat || 1) === 2) layer.repeat = 1;
+        this.buildLayer();
+      })),
+    ]));
+    root.appendChild(hint(layer.pingpong
+      ? `Plays forwards then backwards, ${layer.repeat || 1} passes in all.`
+      : `Plays ${layer.repeat || 1} time${(layer.repeat || 1) === 1 ? '' : 's'} `
+        + 'in a row. Ping-pong makes every other pass run backwards.'));
+
+    this.paneRepeats(root, layer, edit);
   }
 
   paneColour(root, layer, edit) {
@@ -714,37 +1025,9 @@ export class Inspector {
         + 'one keyframe on its own, for a colour that changes more than twice across '
         + 'the clip. HSL tweening walks the colour wheel instead of through grey.'));
     }
-  }
 
-  paneTiming(root, layer, edit) {
-    root.appendChild(section('Timing'));
-    root.appendChild(field('Start (ms)', numberInput(layer.startMs, 0, 600000, 1,
-      (v) => edit('start', () => { setLayerStart(layer, v); }))));
-    root.appendChild(field('Length (ms)', numberInput(layer.durationMs, 16, 600000, 1,
-      (v) => edit('length', () => { layer.durationMs = Math.max(16, v); }))));
-    root.appendChild(field('Repeat', numberInput(layer.repeat || 1, 1, 200, 1,
-      (v) => edit('repeat', () => { layer.repeat = Math.max(1, Math.round(v)); }))));
-    root.appendChild(el('div', { class: 'btn-row' }, [
-      checkbox('Ping-pong', layer.pingpong, (v) => edit('pingpong', () => {
-        layer.pingpong = v;
-        // Ping-pong reverses every other repetition, so it does nothing at all
-        // at repeat 1 - the checkbox looked broken. Turning it on gives it
-        // something to reverse; turning it off puts back the 1 it came from,
-        // but leaves a deliberately larger count alone.
-        if (v && (layer.repeat || 1) < 2) layer.repeat = 2;
-        else if (!v && (layer.repeat || 1) === 2) layer.repeat = 1;
-        this.buildLayer();
-      })),
-    ]));
-    root.appendChild(el('div', { class: 'btn-row' }, [
-      checkbox('Visible before', layer.holdBefore, (v) => edit('hold', () => { layer.holdBefore = v; })),
-      checkbox('Visible after', layer.holdAfter, (v) => edit('hold', () => { layer.holdAfter = v; })),
-    ]));
-    root.appendChild(hint(`Ends at ${Math.round(layerEndMs(layer))} ms.`));
-
-    this.paneTransition(root, layer, edit);
-
-    this.paneRepeats(root, layer, edit);
+    // Blend is a colour question - what this layer's colour does when it meets
+    // the layers under it - so it sits with the colours rather than the clock.
 
     root.appendChild(section('Blend'));
     root.appendChild(field('Mode', selectBox(layer.blend, [
@@ -765,6 +1048,21 @@ export class Inspector {
         + 'mixing does not dim the light. Averaging layers mix with each other; '
         + 'anything on Add still stacks on top.'));
     }
+  }
+
+  paneTiming(root, layer, edit) {
+    root.appendChild(section('Timing'));
+    root.appendChild(field('Start (ms)', numberInput(layer.startMs, 0, 600000, 1,
+      (v) => edit('start', () => { setLayerStart(layer, v); }))));
+    root.appendChild(field('Length (ms)', numberInput(layer.durationMs, 16, 600000, 1,
+      (v) => edit('length', () => { layer.durationMs = Math.max(16, v); }))));
+    root.appendChild(el('div', { class: 'btn-row' }, [
+      checkbox('Visible before', layer.holdBefore, (v) => edit('hold', () => { layer.holdBefore = v; })),
+      checkbox('Visible after', layer.holdAfter, (v) => edit('hold', () => { layer.holdAfter = v; })),
+    ]));
+    root.appendChild(hint(`Ends at ${Math.round(layerEndMs(layer))} ms.`));
+
+    this.paneTransition(root, layer, edit);
   }
 
   /**
@@ -955,10 +1253,13 @@ export class Inspector {
       return wrap;
     }
 
-    const chips = el('div', { class: 'chips' });
-    for (const { tag, count } of app.tags) {
+    // A tag covering exactly one light is that light's own name, not a group.
+    // This machine has 109 tags and most of them are those, which buried the
+    // dozen groups anyone actually aims a layer at. Groups first; the
+    // single-light tags are still here, one fold away.
+    const chip = (tag, count) => {
       const on = t.tags.includes(tag);
-      chips.appendChild(el('button', {
+      return el('button', {
         class: 'chip' + (on ? ' on' : ''),
         title: `${count} light${count === 1 ? '' : 's'} tagged "${tag}"`,
         onclick: () => edit('target tags', () => {
@@ -966,9 +1267,31 @@ export class Inspector {
           if (i >= 0) t.tags.splice(i, 1); else t.tags.push(tag);
           this.buildLayer();
         }),
-      }, [el('span', { text: tag }), el('i', { text: String(count) })]));
+      }, [el('span', { text: tag }), el('i', { text: String(count) })]);
+    };
+
+    const groups = app.tags.filter((x) => x.count > 1);
+    const singles = app.tags.filter((x) => x.count <= 1);
+
+    if (groups.length) {
+      const chips = el('div', { class: 'chips' });
+      for (const { tag, count } of groups) chips.appendChild(chip(tag, count));
+      wrap.appendChild(chips);
+    } else {
+      wrap.appendChild(hint('No tag covers more than one light, so there are no '
+        + 'groups to pick - only the individual lights below.'));
     }
-    wrap.appendChild(chips);
+
+    if (singles.length) {
+      // A picked single stays visible in the fold's label, so a layer aimed at
+      // one light does not look like it is aimed at nothing.
+      const picked = singles.filter((x) => t.tags.includes(x.tag)).length;
+      const body = this.fold(wrap, 'lights:singles',
+        `Individual lights (${singles.length})${picked ? ` - ${picked} picked` : ''}`);
+      const one = el('div', { class: 'chips' });
+      for (const { tag, count } of singles) one.appendChild(chip(tag, count));
+      body.appendChild(one);
+    }
 
     wrap.appendChild(field('Match', selectBox(t.match, [
       ['any', 'Any of the tags'], ['all', 'All of the tags'],
@@ -979,10 +1302,9 @@ export class Inspector {
     ]));
 
     wrap.appendChild(el('div', { class: 'sec', text: 'But never these' }));
-    const ex = el('div', { class: 'chips' });
-    for (const { tag, count } of app.tags) {
+    const exChip = (tag, count) => {
       const on = (t.exclude || []).includes(tag);
-      ex.appendChild(el('button', {
+      return el('button', {
         class: 'chip' + (on ? ' off' : ''),
         title: `Exclude the ${count} light${count === 1 ? '' : 's'} tagged "${tag}"`,
         onclick: () => edit('exclude tags', () => {
@@ -991,9 +1313,19 @@ export class Inspector {
           if (i >= 0) t.exclude.splice(i, 1); else t.exclude.push(tag);
           this.buildLayer();
         }),
-      }, [el('span', { text: tag }), el('i', { text: String(count) })]));
-    }
+      }, [el('span', { text: tag }), el('i', { text: String(count) })]);
+    };
+    const ex = el('div', { class: 'chips' });
+    for (const { tag, count } of groups) ex.appendChild(exChip(tag, count));
     wrap.appendChild(ex);
+    if (singles.length) {
+      const exPicked = singles.filter((x) => (t.exclude || []).includes(x.tag)).length;
+      const exBody = this.fold(wrap, 'lights:exsingles',
+        `Individual lights (${singles.length})${exPicked ? ` - ${exPicked} excluded` : ''}`);
+      const one = el('div', { class: 'chips' });
+      for (const { tag, count } of singles) one.appendChild(exChip(tag, count));
+      exBody.appendChild(one);
+    }
     wrap.appendChild(hint('Exclusions are applied last, so you can say "every shot '
       + 'light, but not the strip".'));
 
@@ -1174,8 +1506,19 @@ export class Inspector {
     }
 
     if (p.type === 'stack') {
-      root.appendChild(field('Second colour', colorInput(p.color2,
-        this.live(`${layer.id}:pcolor2`, 'colour', (v) => { p.color2 = v; }))));
+      // Off by default: the fill is one colour unless you ask for two.
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        checkbox('Fade to a second colour', !!p.color2, (v) => edit('stack second colour', () => {
+          p.color2 = v ? '#2060ff' : '';
+          this.buildLayer();
+        })),
+      ]));
+      if (p.color2) {
+        root.appendChild(field('Second colour', colorInput(p.color2,
+          this.live(`${layer.id}:pcolor2`, 'colour', (v) => { p.color2 = v; }))));
+        root.appendChild(hint('The fill walks from the first colour to this one as '
+          + 'it goes, so the last cell to land is this colour.'));
+      }
       root.appendChild(slider('Columns', p.cols, { min: 1, max: 16, step: 1 },
         this.live(`${layer.id}:pcols`, 'columns', (v) => { p.cols = Math.round(v); })));
       root.appendChild(slider('Rows', p.rows, { min: 1, max: 24, step: 1 },

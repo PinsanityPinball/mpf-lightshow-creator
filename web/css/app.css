@@ -64,15 +64,33 @@ body {
 .group { display: flex; align-items: center; gap: 6px; }
 .lbl { color: var(--fg-dim); font-size: 12px; }
 
+/* Which file is which is the thing people get wrong, and "Map"/"Tags" alone
+   does not say. The second line names what to go and look for. */
+.lbl small {
+  display: block;
+  font-size: 9px;
+  line-height: 1.1;
+  opacity: 0.72;
+}
+/* The two file pickers are what the header is actually for, so they get the
+   room. The show name is renamed once and then read - it does not need 190px. */
+.files { flex: 1 1 auto; min-width: 0; }
+.files select { flex: 1 1 0; min-width: 90px; max-width: 260px; }
+
 .name-input {
   background: var(--bg3);
   border: 1px solid var(--line);
   color: var(--fg);
   border-radius: var(--radius);
   padding: 5px 9px;
-  min-width: 190px;
+  width: 130px;
+  flex: 0 1 130px;
+  min-width: 70px;
   font: inherit;
 }
+/* Widen on focus, so a long name is still editable without costing the header
+   the space for the rest of the session. */
+.name-input:focus { width: 240px; flex-basis: 240px; }
 
 .status {
   padding: 0 12px;
@@ -202,6 +220,50 @@ main {
   overflow: hidden;
 }
 
+.draw-banner {
+  position: absolute;
+  top: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 4;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  background: rgba(14, 90, 120, 0.95);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: #e8f7ff;
+  white-space: nowrap;
+}
+.draw-banner.hidden { display: none; }
+
+/* Overlaid on the playfield rather than tucked behind the ? dialog: these are
+   the controls people need while their hand is already on the playfield, and a
+   dialog you have to go and open is a dialog nobody opens. */
+.stage-help {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 3;
+  max-width: 250px;
+  font-size: 11px;
+  background: rgba(13, 16, 21, 0.9);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.stage-help-toggle {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  background: none; border: 0; color: var(--fg-dim);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.stage-help-toggle:hover { color: var(--fg); }
+.stage-help-arrow { font-size: 9px; }
+.stage-help.min .stage-help-arrow { transform: rotate(-90deg); display: inline-block; }
+.stage-help-body { padding: 2px 8px 7px; display: grid; gap: 3px; color: var(--fg-dim); }
+.stage-help-body b { color: var(--fg); font-weight: 600; }
+.stage-help.min .stage-help-body { display: none; }
+
 #stage {
   display: block;
   box-shadow: 0 0 0 1px var(--line2), 0 10px 40px rgba(0,0,0,0.6);
@@ -212,20 +274,28 @@ main {
 
 /* ---------------------------------------------------------------- side */
 
+/* Three rows, not two: the search box, the tab row, then the scrolling panel.
+   With two, adding the search box pushed the tabs into the 1fr row - they
+   stretched to fill the whole panel height and the body landed in an implicit
+   row below. Any future row added here needs a track, or the same thing
+   happens again. */
 .side-pane {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   background: var(--bg2);
   min-height: 0;
 }
 
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
 .tab {
-  flex: 1;
+  /* Was flex: 1, which stretched four tabs across the whole panel and left the
+     labels floating in the middle of large empty buttons. They hug their text
+     now, like the sub-tabs below them. */
+  flex: 0 0 auto;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
-  padding: 8px 4px;
+  padding: 8px 14px;
   cursor: pointer;
   color: var(--fg-dim);
 }
@@ -504,18 +574,26 @@ main {
 .chip.off i { background: rgba(239,83,80,0.28); }
 
 label.with-extra { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+/* This was 9px with 2px of padding, which read as decoration rather than a
+   control - people looked straight past the one thing that turns a fixed value
+   into an animated one. Bigger, higher contrast when off, and it carries its
+   own on/off dot so the state is readable without knowing the colour code. */
 .anim-btn {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line2);
   background: var(--bg3);
-  color: var(--fg-dim);
+  color: var(--fg);
   border-radius: 4px;
-  font-size: 9px;
-  line-height: 1;
-  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 3px 8px;
   cursor: pointer;
+  white-space: nowrap;
 }
-.anim-btn:hover { border-color: var(--line2); color: var(--fg); }
-.anim-btn.on { background: #4a3410; border-color: var(--accent2); color: var(--accent2); }
+.anim-btn:hover { border-color: var(--accent); }
+.anim-btn.on {
+  background: #4a3410; border-color: var(--accent2); color: var(--accent2);
+  font-weight: 600;
+}
 
 /* ------------------------------------------------------------ wizard */
 .wiz {
@@ -639,6 +717,27 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
 .layer-head input[type=text] { flex: 1; min-width: 0; }
 .layer-head .chk { white-space: nowrap; }
 
+/* Path picker: a grid of routes rather than a row of words. */
+.path-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 5px;
+  margin: 6px 0 10px;
+}
+.path-pick {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 3px 5px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--fg-dim);
+  font-size: 10px;
+  cursor: pointer;
+}
+.path-pick canvas { border-radius: 3px; display: block; }
+.path-pick:hover { border-color: var(--line2); color: var(--fg); }
+.path-pick.on { border-color: var(--accent); color: #cdefff; background: #16303c; }
+
 .subtabs { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; }
 .subtab {
   /* six of these have to fit a 330px column without wrapping */
@@ -677,6 +776,35 @@ label.with-extra { display: flex; align-items: center; justify-content: space-be
 .fb-icon { width: 14px; text-align: center; color: var(--fg-dim); flex: none; }
 .fb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-kind { color: var(--fg-dim); font-size: 11px; flex: none; }
+
+/* find a setting */
+/* a layer selected alongside the primary: same family, quieter */
+.head.also { background: #1b2734; border-color: #33506b; }
+
+.find { margin: 0 0 6px; }
+.find-box {
+  width: 100%; padding: 5px 8px; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--bg3); color: var(--fg);
+}
+.find-box:focus { outline: none; border-color: var(--accent); }
+.find-hits { display: grid; gap: 2px; margin-top: 4px; }
+.find-hit {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 4px 7px; border-radius: 4px; border: 1px solid var(--line);
+  background: var(--bg2); font-size: 12px;
+}
+.find-hit:hover { border-color: var(--accent); }
+.find-where { color: var(--fg-dim); font-size: 11px; flex: none; }
+.find-none { color: var(--fg-dim); font-size: 12px; padding: 4px 2px; }
+/* whatever you searched for, marked long enough to spot and then left alone */
+.found, .field.found > label, label.chk.found {
+  animation: found-pulse 1.6s ease-out;
+  border-radius: 4px;
+}
+@keyframes found-pulse {
+  0%, 60% { background: rgba(79, 195, 247, 0.32); }
+  100% { background: transparent; }
+}
 .fb-save-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .fb-save-row label { color: var(--fg-dim); font-size: 12px; flex: none; }
 .fb-name-input {

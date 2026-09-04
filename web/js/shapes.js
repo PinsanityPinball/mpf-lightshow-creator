@@ -79,6 +79,18 @@ function isOutline(p) {
 
 export const SHAPES = [
   {
+    // A layer that lights nothing, so a path can be drawn before deciding what
+    // travels along it. Every other shape answers "what does this look like";
+    // this one lets you answer "where does it go" first.
+    id: 'none',
+    label: 'No shape',
+    group: 'Basic',
+    common: true,
+    params: [],
+    draw() { /* deliberately nothing */ },
+  },
+
+  {
     id: 'bar',
     label: 'Bar',
     group: 'Basic',

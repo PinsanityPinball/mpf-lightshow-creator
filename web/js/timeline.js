@@ -4,6 +4,7 @@
 import {
   projectDuration, invalidateKeys, makeKey, stateAt, layerFireTimes, setLayerStart,
 } from './project.js';
+import { status } from './ui.js';
 
 const ROW_H = 30;
 const RULER_H = 26;
@@ -127,7 +128,14 @@ export class Timeline {
     if (row < 0) { app.selectLayer(null); app.requestDraw(); return; }
 
     const layer = app.project.layers[row];
-    app.selectLayer(layer.id);
+    // Grabbing a clip that is already part of a multi-selection must not reduce
+    // the selection to it - the whole point is to drag the group. Reducing is
+    // what a plain *click* means, so that happens on mouse up instead, and only
+    // if nothing was dragged.
+    const mods = e.ctrlKey || e.metaKey || e.shiftKey;
+    const inGroup = app.isSelected(layer.id) && app.selectedIds().length > 1;
+    if (mods || !inGroup) app.selectLayer(layer.id);
+    else app.makePrimary(layer.id);
     const rowTop = this.rowY(row);
 
     const x0 = this.msToX(layer.startMs);
@@ -149,6 +157,13 @@ export class Timeline {
     }
 
     if (x >= x0 - EDGE && x <= x1 + EDGE) {
+      // Ctrl adds to the selection, Shift takes the range - the same as the
+      // track heads, so it does not matter which half of the row you click.
+      if (e.ctrlKey || e.metaKey) { app.toggleLayerSelection(layer.id); return; }
+      if (e.shiftKey && app.selectedLayerId && app.selectedLayerId !== layer.id) {
+        app.selectLayerRange(layer.id);
+        return;
+      }
       app.pushUndo('move clip');
       this.pinScale();
       let mode = 'clip';
@@ -157,11 +172,24 @@ export class Timeline {
       // keep the panel pointing at the end being dragged
       if (mode === 'clipL') app.selectKey(0);
       else if (mode === 'clipR') app.selectKey(layer.keys.length - 1);
+      // Dragging one clip of a multi-selection drags all of them, by the same
+      // amount - so the shape of the group survives. Only when the clip grabbed
+      // is part of that selection; grabbing an unselected clip means you meant
+      // that one.
+      const group = app.isSelected(layer.id)
+        ? app.selectedIds().map((id) => app.project.layers.find((l) => l.id === id))
+          .filter(Boolean)
+        : [layer];
       this.drag = {
         mode, layer,
         grabMs: this.xToMs(x) - layer.startMs,
         startMs: layer.startMs,
         durationMs: layer.durationMs,
+        group,
+        was: group.map((l) => ({ startMs: l.startMs, durationMs: l.durationMs })),
+        // a click that never became a drag still means "just this one"
+        mayReduce: !mods && inGroup,
+        moved: false,
       };
       app.refreshInspector();
       return;
@@ -214,6 +242,7 @@ export class Timeline {
       if (!e.altKey) ms = Math.round(ms / snap) * snap;
       // carries the layer's extra firings with it
       setLayerStart(layer, ms);
+      this.spread(d, 'startMs', layer.startMs - d.startMs, snap);
     } else if (d.mode === 'clipL') {
       let ms = this.xToMs(x);
       if (!e.altKey) ms = Math.round(ms / snap) * snap;
@@ -221,18 +250,52 @@ export class Timeline {
       const delta = ms - d.startMs;
       setLayerStart(layer, ms);
       layer.durationMs = Math.max(snap, Math.round(d.durationMs - delta));
+      this.spread(d, 'both', delta, snap);
     } else if (d.mode === 'clipR') {
       let ms = this.xToMs(x);
       if (!e.altKey) ms = Math.round(ms / snap) * snap;
       const reps = Math.max(1, layer.repeat || 1);
       layer.durationMs = Math.max(snap, Math.round((ms - layer.startMs) / reps));
+      this.spread(d, 'durationMs', layer.durationMs - d.durationMs, snap);
     }
 
+    d.moved = true;
     app.onProjectEdit({ light: true });
+  }
+
+
+  /**
+   * Apply the primary clip's change to the rest of the selection.
+   *
+   * By the same delta rather than to the same value: dragging three clips'
+   * ends should keep them three different lengths, not collapse them onto one.
+   * Every layer is measured from where it was when the drag started, so the
+   * result does not drift as the pointer moves back and forth.
+   */
+  spread(d, what, delta, snap) {
+    if (!d.group || d.group.length < 2 || !delta) return;
+    for (let i = 0; i < d.group.length; i++) {
+      const l = d.group[i];
+      if (l === d.layer) continue;
+      const was = d.was[i];
+      if (what === 'startMs' || what === 'both') {
+        setLayerStart(l, Math.max(0, was.startMs + delta));
+      }
+      if (what === 'durationMs') {
+        l.durationMs = Math.max(snap, Math.round(was.durationMs + delta));
+      }
+      if (what === 'both') {
+        l.durationMs = Math.max(snap, Math.round(was.durationMs - delta));
+      }
+      invalidateKeys(l);
+    }
   }
 
   onUp() {
     if (!this.drag) return;
+    if (this.drag.mayReduce && !this.drag.moved) {
+      this.app.selectLayer(this.drag.layer.id);
+    }
     const wasKey = this.drag.mode === 'key';
     this.drag = null;
     this.unpinScale();
@@ -247,7 +310,15 @@ export class Timeline {
     const app = this.app;
     const layer = app.project.layers[row];
     const rowTop = this.rowY(row);
-    if (this.keyAt(layer, rowTop, x, y) >= 0) return;
+    const ki = this.keyAt(layer, rowTop, x, y);
+    if (ki >= 0) {
+      // Double-clicking the last keyframe stretches the layer to the end of the
+      // show. The keyframes are stored as fractions of the clip, so they scale
+      // with it and the composition is kept - only the clock changes.
+      const last = layer.keys.reduce((m, k) => Math.max(m, k.t), 0);
+      if (layer.keys[ki].t === last) this.fillShow(layer);
+      return;
+    }
     const dur = Math.max(1, layer.durationMs);
     const t = Math.max(0, Math.min(1, (this.xToMs(x) - layer.startMs) / dur));
     app.pushUndo('add keyframe');
@@ -261,22 +332,55 @@ export class Timeline {
     app.refreshInspector();
   }
 
+  /** Stretch a layer so it runs to the end of the show. */
+  fillShow(layer) {
+    const app = this.app;
+    const showEnd = Math.round(projectDuration(app.project));
+    const reps = Math.max(1, layer.repeat || 1);
+    const want = Math.round((showEnd - layer.startMs) / reps);
+    if (want < 16) {
+      status('That layer starts too close to the end of the show to stretch.', 'err');
+      return;
+    }
+    if (want === layer.durationMs) {
+      // On "follow the layers" the longest layer *is* the show, so asking it to
+      // fill the show is asking for what it already does. Saying so beats a
+      // double-click that looks like it did nothing.
+      status(app.project.durationMs > 0
+        ? 'That layer already runs to the end of the show.'
+        : 'That layer already ends the show. Give the show a fixed length on the '
+          + 'Show tab to stretch layers to it.', 'ok');
+      return;
+    }
+    app.pushUndo('fill the show');
+    const was = layer.durationMs;
+    layer.durationMs = Math.max(16, want);
+    invalidateKeys(layer);
+    app.onProjectEdit({});
+    app.refreshInspector();
+    status(`${layer.name}: ${was} ms -> ${layer.durationMs} ms, `
+      + `ending at ${showEnd} ms with the show.`, 'ok');
+  }
+
   onWheel(e) {
     e.preventDefault();
     const app = this.app;
+    // Plain wheel zooms, the same as over the playfield. Row scrolling moves to
+    // Ctrl, which it has to share with nothing else - the track heads beside the
+    // timeline still scroll on their own too.
     if (e.ctrlKey) {
-      const before = this.xToMs(this.pointer(e).x);
-      app.setZoom(app.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
-      const after = this.xToMs(this.pointer(e).x);
-      this.scrollMs = Math.max(0, this.scrollMs + (before - after));
+      const max = Math.max(0, this.app.project.layers.length * ROW_H - (this.h - RULER_H));
+      this.scrollY = Math.max(0, Math.min(max, this.scrollY + e.deltaY));
+      this.heads.scrollTop = this.scrollY;
       this.draw();
     } else if (e.shiftKey) {
       this.scrollMs = Math.max(0, this.scrollMs + e.deltaY / this.pxPerMs());
       this.draw();
     } else {
-      const max = Math.max(0, this.app.project.layers.length * ROW_H - (this.h - RULER_H));
-      this.scrollY = Math.max(0, Math.min(max, this.scrollY + e.deltaY));
-      this.heads.scrollTop = this.scrollY;
+      const before = this.xToMs(this.pointer(e).x);
+      app.setZoom(app.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+      const after = this.xToMs(this.pointer(e).x);
+      this.scrollMs = Math.max(0, this.scrollMs + (before - after));
       this.draw();
     }
   }
@@ -367,7 +471,7 @@ export class Timeline {
   drawRow(layer, index, y) {
     const ctx = this.ctx;
     const app = this.app;
-    const selected = app.selectedLayerId === layer.id;
+    const selected = app.isSelected(layer.id);
 
     if (index % 2 === 1) {
       ctx.fillStyle = 'rgba(255,255,255,0.015)';

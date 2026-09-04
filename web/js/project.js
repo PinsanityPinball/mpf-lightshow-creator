@@ -132,7 +132,11 @@ export function makeLayer(over = {}) {
     animParams: [],          // which shape params come from the keyframes
     image: 'white_line.png',
     colorMode: 'solid',      // solid | gradient | rainbow
-    colorLerp: 'rgb',        // rgb | hsl
+    // Around the wheel by default. RGB tweening walks in a straight line
+    // through the middle of the colour space, so red to blue dips through a
+    // muddy grey-purple on the way; HSL keeps the saturation up and travels
+    // through the hues, which is what anyone picking two colours expects.
+    colorLerp: 'hsl',        // rgb | hsl
     rainbowSpread: 360,
     rainbowOffset: 0,
     startMs: 0,
@@ -838,7 +842,7 @@ export function makePattern(over = {}) {
     spreadTrail: 0.35,     // width of that front when it does not hold
     // comet - a thrown point under gravity, bouncing off the walls
     cometMs: 2500,
-    comets: 2,
+    comets: 1,            // one is the shape people picture; add more deliberately
     launchSpeed: 1.6,
     gravity: 0,           // 0 = straight lines bouncing off all four edges
     cometAngle: 35,       // launch angle in degrees, when there is no gravity
@@ -858,7 +862,10 @@ export function makePattern(over = {}) {
     fillMs: 1500,
     fillOrder: 'bottom-up',   // bottom-up | top-down | left-right | right-left
     fillMode: 'fill',         // fill (cells stay lit) | wipe (only the leading cell)
-    color2: '#2060ff',
+    // Empty means one colour. Only Stack reads this, and it arrived as a
+    // red-to-blue gradient nobody asked for - the fill reads better plain,
+    // and a second colour is now something you go and turn on.
+    color2: '',
     // Tetris: show each cell travelling from the edge to its resting place
     // instead of appearing there. dropTrail dims the moving cell.
     drop: true,
@@ -910,6 +917,52 @@ export function targetBounds(layer, lights, mask) {
   layer._boundsFor = lights;
   layer._boundsMask = mask;
   return b;
+}
+
+/**
+ * Turn a layer into the other kind, in place.
+ *
+ * A shape layer draws something and samples the pixels; a pattern layer sets
+ * light colours directly and has no geometry at all - which is why one has
+ * Shape/Path/Motion/Size tabs and the other does not. Picking the wrong one
+ * used to mean deleting the layer and starting over, timing and light
+ * targeting included.
+ *
+ * Everything not specific to the kind survives: name, timing, repeats, extra
+ * firings, which lights, blend and transition. The side being left is kept
+ * rather than thrown away, so changing your mind back restores what was there
+ * instead of handing you a default.
+ */
+export function convertLayerKind(layer, kind) {
+  if (!layer || layer.kind === kind) return layer;
+  if (layer.kind === 'show' || kind === 'show') return layer;   // baked frames, not ours to invent
+
+  if (kind === 'pattern') {
+    layer.kind = 'pattern';
+    layer.pattern = makePattern(layer.pattern || {});
+    // keys carry the alpha a pattern still uses, and the shape it can go back to
+    if (!layer.keys || !layer.keys.length) {
+      layer.keys = [makeKey(0, { alpha: 1 }), makeKey(1, { alpha: 1 })];
+    }
+  } else {
+    layer.kind = 'shape';
+    layer.shapeId = layer.shapeId || 'bar';
+    layer.shapeParams = Object.assign(shapeDefaults(layer.shapeId), layer.shapeParams || {});
+    // makeKey fills in a position and a size even for a pattern's alpha-only
+    // keyframes, so a converted layer normally arrives as a visible bar in the
+    // middle of the playfield. This is the safety net for keys that have been
+    // explicitly scaled to nothing, where the result would be invisible and
+    // read as the conversion having failed.
+    const usable = (layer.keys || []).some((k) => k.sx > 0 && k.sy > 0);
+    if (!usable) {
+      const fresh = makeLayer({ shapeId: layer.shapeId });
+      layer.keys = fresh.keys.map((k, i) => Object.assign(k, {
+        alpha: layer.keys && layer.keys[i] ? layer.keys[i].alpha : 1,
+      }));
+    }
+  }
+  invalidateKeys(layer);
+  return layer;
 }
 
 export function makePatternLayer(over = {}) {

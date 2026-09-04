@@ -242,7 +242,7 @@ export function rangeRow(label, spec, current, apply, after) {
   // hidden until you ask for it.
   const badge = el('button', {
     class: 'anim-btn' + (linked ? '' : ' on'),
-    text: 'changes',
+    text: (linked ? '\u25cb' : '\u25cf') + ' changes',
     title: linked
       ? 'Off: one value for the whole clip. Turn on to animate it.'
       : 'On: animates from the start value to the end value.',
@@ -272,6 +272,7 @@ export function rangeRow(label, spec, current, apply, after) {
 
   function sync() {
     badge.className = 'anim-btn' + (linked ? '' : ' on');
+    badge.textContent = (linked ? '\u25cb' : '\u25cf') + ' changes';
     badge.title = linked
       ? 'Off: one value for the whole clip. Turn on to animate it.'
       : 'On: animates from the start value to the end value.';

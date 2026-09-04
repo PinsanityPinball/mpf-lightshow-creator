@@ -92,6 +92,10 @@ export const PATH_PRESETS = PATHS.filter((p) => p.id !== 'none').map(pathPreset)
 
 export const GROUP_ORDER = ['Patterns', 'Paths', 'Wipes', 'Radial', 'Flashes'];
 
+// Presets start on linear easing. They used to arrive with sine and expo
+// curves baked in, which meant the first thing you did with one was work out
+// where the easing was coming from and take it back out. Linear is the neutral
+// starting point: add character deliberately, per keyframe or with "Ease all".
 export const PRESETS = [
   {
     id: 'chase-names',
@@ -204,7 +208,7 @@ export const PRESETS = [
     pattern: true,
     build: (c) => makePatternLayer({
       name: 'Comet', durationMs: 3000,
-      pattern: { type: 'comet', color: c, comets: 2, cometMs: 4000,
+      pattern: { type: 'comet', color: c, cometMs: 4000,
         launchSpeed: 1.4, gravity: 0, cometAngle: 35 },
     }),
   },
@@ -311,8 +315,8 @@ export const PRESETS = [
       name: 'Pulse', shapeId: 'halo', durationMs: 500, repeat: 2,
       shapeParams: S('halo', { falloff: 1.4, core: 0.35 }),
       keys: [
-        makeKey(0, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 0, ease: 'sine-out' }),
-        makeKey(0.35, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 1, ease: 'sine-in' }),
+        makeKey(0, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 0 }),
+        makeKey(0.35, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 1 }),
         makeKey(1, { x: 0.5, y: 0.5, sx: 2.4, sy: 2.4, color: c, alpha: 0 }),
       ],
     }),
@@ -323,7 +327,7 @@ export const PRESETS = [
     name: 'Colour fade (whole field)',
     group: 'Flashes',
     build: (c) => makeLayer({
-      name: 'Colour fade', shapeId: 'bar', durationMs: 1500, colorLerp: 'hsl',
+      name: 'Colour fade', shapeId: 'bar', durationMs: 1500,
       shapeParams: S('bar', { len: 3, thick: 3 }),
       keys: [
         makeKey(0, { x: 0.5, y: 0.5, sx: 1.2, sy: 2.4, color: c }),
@@ -341,7 +345,7 @@ export const PRESETS = [
       name: 'Sweep up', shapeId: 'bar', durationMs: 900,
       shapeParams: S('bar', { len: 1.6, thick: 0.16, feather: 0.7 }),
       keys: [
-        makeKey(0, { x: 0.5, y: 1.08, sx: 0.9, sy: 0.9, color: c, ease: 'sine-in-out' }),
+        makeKey(0, { x: 0.5, y: 1.08, sx: 0.9, sy: 0.9, color: c }),
         makeKey(1, { x: 0.5, y: -0.08, sx: 0.9, sy: 0.9, color: c }),
       ],
     }),
@@ -355,7 +359,7 @@ export const PRESETS = [
       name: 'Sweep down', shapeId: 'bar', durationMs: 900,
       shapeParams: S('bar', { len: 1.6, thick: 0.16, feather: 0.7 }),
       keys: [
-        makeKey(0, { x: 0.5, y: -0.08, sx: 0.9, sy: 0.9, color: c, ease: 'sine-in-out' }),
+        makeKey(0, { x: 0.5, y: -0.08, sx: 0.9, sy: 0.9, color: c }),
         makeKey(1, { x: 0.5, y: 1.08, sx: 0.9, sy: 0.9, color: c }),
       ],
     }),
@@ -383,7 +387,7 @@ export const PRESETS = [
       name: 'Diagonal wipe', shapeId: 'bar', durationMs: 900,
       shapeParams: S('bar', { len: 2.6, thick: 0.18, feather: 0.8 }),
       keys: [
-        makeKey(0, { x: -0.1, y: 1.1, rot: 45, sx: 0.9, sy: 0.9, color: c, ease: 'sine-in-out' }),
+        makeKey(0, { x: -0.1, y: 1.1, rot: 45, sx: 0.9, sy: 0.9, color: c }),
         makeKey(1, { x: 1.1, y: -0.1, rot: 45, sx: 0.9, sy: 0.9, color: c }),
       ],
     }),
@@ -397,7 +401,7 @@ export const PRESETS = [
       name: 'Expanding ring', shapeId: 'ring', durationMs: 800,
       shapeParams: S('ring', { thick: 0.16, feather: 0.7 }),
       keys: [
-        makeKey(0, { x: 0.5, y: 0.5, sx: 0.03, sy: 0.03, color: c, alpha: 1, ease: 'expo-out' }),
+        makeKey(0, { x: 0.5, y: 0.5, sx: 0.03, sy: 0.03, color: c, alpha: 1 }),
         makeKey(1, { x: 0.5, y: 0.5, sx: 2.2, sy: 2.2, color: c, alpha: 0 }),
       ],
     }),
@@ -411,7 +415,7 @@ export const PRESETS = [
       name: 'Collapsing ring', shapeId: 'ring', durationMs: 800,
       shapeParams: S('ring', { thick: 0.16, feather: 0.7 }),
       keys: [
-        makeKey(0, { x: 0.5, y: 0.5, sx: 2.2, sy: 2.2, color: c, alpha: 0, ease: 'expo-in' }),
+        makeKey(0, { x: 0.5, y: 0.5, sx: 2.2, sy: 2.2, color: c, alpha: 0 }),
         makeKey(1, { x: 0.5, y: 0.5, sx: 0.03, sy: 0.03, color: c, alpha: 1 }),
       ],
     }),
@@ -468,7 +472,7 @@ export const PRESETS = [
       name: 'Starburst', shapeId: 'cross', durationMs: 650,
       shapeParams: S('cross', { arms: 8, thick: 0.1, taper: 0.85 }),
       keys: [
-        makeKey(0, { x: 0.5, y: 0.5, rot: 0, sx: 0.05, sy: 0.05, color: c, alpha: 1, ease: 'expo-out' }),
+        makeKey(0, { x: 0.5, y: 0.5, rot: 0, sx: 0.05, sy: 0.05, color: c, alpha: 1 }),
         makeKey(1, { x: 0.5, y: 0.5, rot: 45, sx: 1.9, sy: 1.9, color: c, alpha: 0 }),
       ],
     }),

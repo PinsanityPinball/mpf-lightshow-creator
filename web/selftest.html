@@ -570,9 +570,12 @@ async function checkWizardParity(app) {
     // Lights tab only after "Only these tags". Reporting those as missing is
     // wrong - they are one choice away, exactly like the wizard's own steps - so
     // walk every option of every dropdown and count what each one reveals.
-    const selects = [...doc.querySelectorAll('#panelLayer select')].length;
+    // Not every dropdown is a setting. One of them changes the layer's kind,
+    // which replaces the tabs underneath us - cycling it mid-walk converted the
+    // layer and the rest of the walk was reading a different panel.
+    const selects = [...doc.querySelectorAll('#panelLayer select:not([data-structural])')].length;
     for (let sIdx = 0; sIdx < selects; sIdx++) {
-      const all = [...doc.querySelectorAll('#panelLayer select')];
+      const all = [...doc.querySelectorAll('#panelLayer select:not([data-structural])')];
       const sel = all[sIdx];
       if (!sel || sel.options.length < 2) continue;
       const was = sel.value;
@@ -584,7 +587,7 @@ async function checkWizardParity(app) {
         await settle();
         panelText += ' ' + textOf(doc.getElementById('panelLayer'));
       }
-      const back = [...doc.querySelectorAll('#panelLayer select')][sIdx];
+      const back = [...doc.querySelectorAll('#panelLayer select:not([data-structural])')][sIdx];
       if (back) {
         back.value = was;
         back.dispatchEvent(new win.Event('change', { bubbles: true }));

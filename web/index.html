@@ -14,11 +14,11 @@
 
   <input id="showName" class="name-input" type="text" value="Untitled show" spellcheck="false" title="Show name">
 
-  <div class="group">
-    <label class="lbl" for="lightMap">Map</label>
-    <select id="lightMap" title="Light positions (monitor.yaml)"></select>
-    <label class="lbl" for="tagFile">Tags</label>
-    <select id="tagFile" title="Light tags (lights.yaml)"></select>
+  <div class="group files">
+    <label class="lbl" for="lightMap">Map<small>monitor.yaml</small></label>
+    <select id="lightMap" title="Where each light is on the playfield - your machine's monitor.yaml"></select>
+    <label class="lbl" for="tagFile">Tags<small>light settings</small></label>
+    <select id="tagFile" title="What each light is called and which groups it belongs to - your machine's light settings YAML"></select>
     <button id="btnReloadMap" class="btn icon" title="Reload the light map and tags from disk">&#10227;</button>
     <span id="lightCount" class="muted">–</span>
   </div>
@@ -57,16 +57,38 @@
         Size
         <input type="range" id="rngLightSize" min="0.3" max="3" step="0.05" value="1">
       </label>
+      <button id="btnRecenter" class="btn small" title="Back to the playfield filling the view (zoom 1:1, no pan)">Recentre</button>
       <div class="spacer"></div>
       <span id="hoverInfo" class="muted mono"></span>
     </div>
     <div class="stage-wrap">
+      <div id="drawBanner" class="draw-banner hidden">
+        <b>Drawing a path</b>
+        <span>Click where it goes next.</span>
+        <button id="drawDone" class="btn small primary">Finish</button>
+        <button id="drawCancel" class="btn small">Cancel</button>
+      </div>
+      <div id="stageHelp" class="stage-help">
+        <button id="stageHelpToggle" class="stage-help-toggle" title="Playfield controls">
+          <span class="stage-help-arrow">&#9662;</span>Controls
+        </button>
+        <div id="stageHelpBody" class="stage-help-body">
+          <div><b>Left-drag</b> move the whole layer &mdash; the shape, a keyframe, or the path</div>
+          <div><b>Right-drag</b> move one keyframe, or make one where the playhead is</div>
+          <div><b>Wheel</b> zoom, to reach keyframes past the edge</div>
+          <div><b>Middle-drag</b> pan &mdash; <b>Recentre</b> above puts it back</div>
+          <div><b>Blue handle</b> resize &mdash; hold Shift to keep it square</div>
+          <div><b>Orange handle</b> rotate &mdash; hold Shift to snap to 15&deg;</div>
+          <div><b>Click a light</b> pin it, to watch its colour</div>
+        </div>
+      </div>
       <canvas id="stage"></canvas>
     </div>
   </section>
 
   <!-- ------------------------------------------------ inspector -->
   <aside class="side-pane">
+    <div id="findWrap"></div>
     <div class="tabs" role="tablist">
       <button class="tab active" data-tab="layer">Layer</button>
       <button class="tab" data-tab="key">Keyframe</button>
@@ -141,6 +163,7 @@
           <button id="emptyPreset" class="btn primary big">Start from a preset</button>
           <button id="emptyWizard" class="btn big">Build one step by step</button>
           <button id="emptyRandom" class="btn big">Add a random layer</button>
+          <button id="emptyDraw" class="btn big">Draw a path</button>
         </div>
       </div>
     </div>
