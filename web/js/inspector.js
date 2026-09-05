@@ -217,32 +217,6 @@ export class Inspector {
       })),
     ]));
 
-    // What kind of layer this is, and a way to change your mind. Imported shows
-    // replay baked frames, so they are not something the other kinds convert to.
-    if (layer.kind !== 'show') {
-      const kindSel = selectBox(layer.kind === 'pattern' ? 'pattern' : 'shape', [
-        ['shape', 'Shape - draws and moves something'],
-        ['pattern', 'Pattern - drives the lights directly'],
-      ], (v) => edit('layer type', () => {
-        convertLayerKind(layer, v);
-        this._idx = null;             // the tabs just changed, so the index has
-        this.layerTab = null;         // and whichever tab was open may be gone
-        this.buildLayer();
-        app.rebuildHeads();
-      }));
-      // Changing this rebuilds the whole tab set, so anything walking the panel
-      // needs to know not to poke it the way it pokes an ordinary dropdown.
-      kindSel.dataset.structural = '1';
-      root.appendChild(field('Layer type', kindSel));
-      root.appendChild(hint(layer.kind === 'pattern'
-        ? 'A pattern sets light colours straight off, so it has no shape to draw '
-          + 'and no path to travel - that is why there are no Shape, Path, Motion '
-          + 'or Size tabs. Switch to Shape to get them.'
-        : 'A shape is drawn on the playfield and sampled by the lights it covers, '
-          + 'so it has a shape, a path and a size. Switch to Pattern to set light '
-          + 'colours directly instead.'));
-    }
-
     // ---- sub-tabs
     const tabs = this.layerTabs(layer);
     if (!tabs.some(([id]) => id === this.layerTab)) this.layerTab = tabs[0][0];
@@ -261,6 +235,33 @@ export class Inspector {
 
     this.buildPane(this.layerTab, pane, layer, edit);
     this.flashSetting(pane);
+
+    // Changing what kind of layer this is belongs at the bottom: it is a rare,
+    // structural thing, and above the tabs it pushed Shape and Path down the
+    // panel with three lines of explanation nobody needs twice. The search box
+    // finds it by name, which is what that is for.
+    if (layer.kind !== 'show') {
+      const kindSel = selectBox(layer.kind === 'pattern' ? 'pattern' : 'shape', [
+        ['shape', 'Shape - draws and moves something'],
+        ['pattern', 'Pattern - drives the lights directly'],
+      ], (v) => edit('layer type', () => {
+        convertLayerKind(layer, v);
+        this._idx = null;             // the tabs just changed, so the index has
+        this.layerTab = null;         // and whichever tab was open may be gone
+        this.buildLayer();
+        app.rebuildHeads();
+      }), layer.kind === 'pattern'
+        ? 'A pattern sets light colours directly, so it has no shape, path, motion '
+          + 'or size. Switch to Shape to get those tabs.'
+        : 'A shape is drawn on the playfield and sampled by the lights it covers. '
+          + 'Switch to Pattern to set light colours directly instead.');
+      // Changing this rebuilds the whole tab set, so anything walking the panel
+      // needs to know not to poke it the way it pokes an ordinary dropdown.
+      kindSel.dataset.structural = '1';
+      const row = el('div', { class: 'layer-kind' }, []);
+      row.appendChild(field('Layer type', kindSel));
+      root.appendChild(row);
+    }
   }
 
   /** One tab's contents. Split out so the search index can build them all. */
@@ -846,11 +847,11 @@ export class Inspector {
 
     root.appendChild(section('Transform'));
     root.appendChild(el('div', { class: 'btn-row' },
-      TRANSFORMS.map((tr) => button(tr.label, () => edit(tr.label, () => {
-        tr.apply(layer);
-        invalidateKeys(layer);
-        this.app.refreshInspector();
-      }), 'small'))));
+      TRANSFORMS.map((tr) => this.transformButton(tr, layer, edit))));
+    root.appendChild(hint('Mirror and Reverse undo themselves - click again and you '
+      + 'are back where you started. Rotate and grow / shrink write the spin and '
+      + 'size across the whole clip, so clicking one that is already on flattens '
+      + 'them again rather than doing nothing.'));
 
     root.appendChild(section('Randomise'));
     root.appendChild(el('div', { class: 'btn-row' }, [
@@ -866,6 +867,55 @@ export class Inspector {
     ]));
     root.appendChild(hint('Random start lands in the middle half of the playfield; '
       + 'random exit puts the last keyframe just off one edge.'));
+  }
+
+  /**
+   * One Transform button, which knows whether it is already applied.
+   *
+   * Mirror and Reverse are their own opposite, so they were always reversible.
+   * Rotate and grow / shrink are not: they overwrite rot and scale on every
+   * keyframe with absolute values, so pressing one twice gives the same result
+   * and there is no way back short of undo - it reads as a button that latched.
+   * Detecting "already applied" is stateless: apply it to a copy and see if
+   * anything would change.
+   */
+  transformButton(tr, layer, edit) {
+    const flattens = tr.id === 'rotate-grow' || tr.id === 'rotate-shrink';
+    const on = flattens && this.transformIsApplied(tr, layer);
+    const b = button(tr.label, () => edit(on ? 'flatten ' + tr.label : tr.label, () => {
+      if (on) {
+        // Back to one spin and one size for the whole clip - the state these
+        // transforms build from, and the only "off" that is well defined.
+        const sorted = layer.keys.slice().sort((a, c) => a.t - c.t);
+        const first = sorted[0];
+        if (first) {
+          for (const k of layer.keys) { k.rot = first.rot; k.sx = first.sx; k.sy = first.sy; }
+        }
+      } else {
+        tr.apply(layer);
+      }
+      invalidateKeys(layer);
+      this.app.refreshInspector();
+    }), 'small' + (on ? ' on' : ''));
+    b.title = on
+      ? 'Already applied - click to flatten the spin and size back out'
+      : (flattens ? 'Spin and grow across the clip' : 'Click again to undo it');
+    return b;
+  }
+
+  /** Would applying this transform change anything? */
+  transformIsApplied(tr, layer) {
+    if (!layer.keys || layer.keys.length < 2) return false;
+    const before = layer.keys.map((k) => ({ rot: k.rot, sx: k.sx, sy: k.sy }));
+    const copy = { keys: layer.keys.map((k) => Object.assign({}, k)) };
+    try {
+      tr.apply(copy);
+    } catch (err) {
+      return false;
+    }
+    const near = (a, b) => Math.abs(a - b) < 1e-6;
+    return copy.keys.every((k, i) => near(k.rot, before[i].rot)
+      && near(k.sx, before[i].sx) && near(k.sy, before[i].sy));
   }
 
   paneMotion(root, layer, edit) {
@@ -1406,6 +1456,12 @@ export class Inspector {
       solid: 'a whole number of pulses',
       blink: 'a whole number of pulses',
     };
+    // "Fit" means two different things depending on the pattern, and saying
+    // which is the difference between a setting you trust and one you poke at.
+    // These four run ONCE across the clip, so the clip length is the speed.
+    // Everything else keeps roughly the rate you set and only rounds it so a
+    // cycle never gets cut off half way.
+    const SPANS_CLIP = new Set(['stack', 'chase', 'contagion', 'sweep']);
     if (FIT_MEANS[p.type]) {
       root.appendChild(el('div', { class: 'btn-row' }, [
         checkbox('Fit to layer length', p.fit !== false, (v) => edit('fit to layer', () => {
@@ -1413,9 +1469,22 @@ export class Inspector {
           this.buildLayer();
         })),
       ]));
+      const reps = Math.max(1, layer.repeat || 1);
+      const secs = (layer.durationMs / 1000).toFixed(2);
+      // The clip repeating is the thing this hint used to leave out: it read
+      // "one complete spread over its 3333 ms" while the eye saw three spreads,
+      // because the repeat count was never mentioned.
+      const times = reps > 1
+        ? ` The clip runs ${reps} times, so the show gets ${reps} of them.`
+        : '';
       root.appendChild(hint(p.fit !== false
-        ? `Timed to the clip: ${FIT_MEANS[p.type]} over its ${layer.durationMs} ms. `
-          + 'Resize the clip and the pattern stretches with it.'
+        ? (SPANS_CLIP.has(p.type)
+          ? `Timed to the clip: ${FIT_MEANS[p.type]}, taking the whole ${secs}s. `
+            + `The clip's length is what sets the speed - make it longer and this `
+            + `happens more slowly.${times}`
+          : `Timed to the clip: ${FIT_MEANS[p.type]} within its ${secs}s. It keeps `
+            + 'roughly the rate set below and is only nudged so a cycle never gets '
+            + `cut off part way through.${times}`)
         : 'Running on its own timing, which is unrelated to the clip length - it can '
           + 'finish early and hold, or be cut off mid-cycle.'));
     }
@@ -2233,11 +2302,12 @@ export class Inspector {
     }))));
 
     if (p.durationMs > 0) {
-      root.appendChild(field('Length (ms)', numberInput(p.durationMs, 50, 600000, 10,
-        (v) => edit('duration', () => {
-          p.durationMs = Math.max(50, Math.round(v));
-          this.buildShow();
-        }))));
+      root.appendChild(field('Length (s)',
+        numberInput(Number((p.durationMs / 1000).toFixed(3)), 0.05, 600, 0.5,
+          (v) => edit('duration', () => {
+            p.durationMs = Math.max(50, Math.round(v * 1000));
+            this.buildShow();
+          }))));
       root.appendChild(hint(`Fixed at ${effective} ms (${(effective / 1000).toFixed(2)} s). `
         + 'The timeline keeps this scale no matter what the layers do.'));
       if (content > p.durationMs) {
@@ -2257,13 +2327,16 @@ export class Inspector {
         + 'last layer moves or grows - pick a fixed length to hold it still.'));
     }
 
-    const target = el('input', { type: 'number', value: effective, min: 50, max: 600000, step: 10 });
+    const target = el('input', {
+      type: 'number', value: Number((effective / 1000).toFixed(3)),
+      min: 0.05, max: 600, step: 0.5,
+    });
     const fit = el('div', { class: 'field row' }, [
-      el('label', { text: 'Fit to' }),
+      el('label', { text: 'Fit to (s)' }),
       el('div', { style: 'display:flex;gap:6px;align-items:center' }, [
         target,
         button('Scale', () => {
-          const v = Number(target.value);
+          const v = Number(target.value) * 1000;
           if (v > 0) app.scaleShowToLength(v);
         }, 'small'),
       ]),

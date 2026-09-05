@@ -368,8 +368,8 @@ class App {
     this.inspector.refresh();
     this.requestDraw();
     this.syncDrawBanner();
-    status('Drawing a path: click where it goes. Enter or double-click to finish, '
-      + 'Esc to throw it away.', 'ok');
+    status('Drawing a path: right-click to place points, left-drag to move one. '
+      + 'Enter or double-click to finish, Esc to throw it away.', 'ok');
   }
 
   /** Show or hide the drawing banner to match the mode. */
@@ -381,9 +381,9 @@ class App {
     const layer = this.project.layers.find((l) => l.id === this.drawPath.id);
     const n = layer ? layer.keys.length : 0;
     b.querySelector('span').textContent = n < 1
-      ? 'Click where it starts.'
-      : (n === 1 ? 'Click where it goes next.'
-        : `${n} points. Click for another, or finish.`);
+      ? 'Right-click where it starts.'
+      : `${n} point${n === 1 ? '' : 's'}. Right-click to add another, `
+        + 'left-drag one to move it.';
   }
 
   /** One click while drawing: another point on the route. */
@@ -552,7 +552,32 @@ class App {
 
   onProjectEdit(opts = {}) {
     this.requestDraw();
+    this.syncShowQuick();
     if (!opts.light) this.rebuildHeads();
+  }
+
+  /**
+   * Keep the toolbar's show length and rate showing the truth.
+   *
+   * They are the same two project fields the Show tab edits, so they are read
+   * back rather than remembered - two places holding their own copy is how
+   * they end up disagreeing.
+   */
+  syncShowQuick() {
+    const len = $('#quickLength');
+    const fps = $('#quickFps');
+    if (!len || !fps) return;
+    if (document.activeElement !== len) {
+      // Trimmed rather than fixed to 2dp, so a round 8s reads "8" not "8.00"
+      len.value = Number((projectDuration(this.project) / 1000).toFixed(3));
+      // Auto length is derived from the layers, so the box shows what it came
+      // out as but says it is not being dictated.
+      len.classList.toggle('derived', !(this.project.durationMs > 0));
+      len.title = this.project.durationMs > 0
+        ? 'Fixed length. Everything else on the Show tab.'
+        : 'Following the layers - type here to fix it. Everything else on the Show tab.';
+    }
+    if (document.activeElement !== fps) fps.value = this.project.fps || 30;
   }
 
   refreshInspector() { this.inspector.refresh(); }
@@ -641,13 +666,83 @@ class App {
   addLayer(layer) {
     this.pushUndo('add layer');
     layer.startMs = 0;
+    const note = this.fillShowLength(layer);
     this.project.layers.push(layer);
     this.selectedLayerId = layer.id;
+    this.alsoSelected = [];
     this.selectedKeyIndex = 0;
     this.rebuildHeads();
     this.inspector.refresh();
     this.requestDraw();
-    status(`Added "${layer.name}"`, 'ok');
+    status(`Added "${layer.name}"${note ? ' - ' + note : ''}`, 'ok');
+    if (this.pendingCycle) this.askAboutCycle();
+  }
+
+  /**
+   * Make a new layer run the length of the show.
+   *
+   * Only against a *fixed* show length. On "follow the layers" the show is as
+   * long as its longest layer, so filling it would be circular - the layer
+   * would stretch to whatever it already is, and the first layer in an empty
+   * show would come out 100ms long.
+   *
+   * A gesture is stretched: one sweep, taking the whole show. A pattern is
+   * tiled instead, because stretching a blink to ten seconds gives one very
+   * slow blink rather than a blinking show - so its own cycle is kept and
+   * repeated. When the cycle does not divide the show evenly the last one is
+   * cut off mid-way, which is what askAboutCycle offers to fix.
+   */
+  fillShowLength(layer) {
+    if (!(this.project.durationMs > 0)) return '';
+    const show = Math.round(this.project.durationMs);
+    if (show < 32) return '';
+    this.pendingCycle = null;
+
+    // Stretch, whatever kind of layer it is. Tiling patterns by setting repeat
+    // was wrong: a pattern already keeps its own rate in a longer clip, because
+    // fitPeriod nudges its period to fit whole cycles. All the repeat did was
+    // divide the clip up, so dragging the clip's end then changed the cycle
+    // length instead of the end - and a Contagion whose spread was 3s of a 3x
+    // repeat could not be dragged past 3s of spread however long the clip got.
+    const reps = Math.max(1, layer.repeat || 1);
+    layer.durationMs = Math.max(16, Math.round(show / reps));
+    if (reps > 1) {
+      // A layer that arrived already repeating keeps its count, so its cycle
+      // has to divide the show or the last pass is cut short.
+      const cycle = layer.durationMs;
+      if (Math.abs(show / cycle - reps) > 1e-6) {
+        this.pendingCycle = { cycle, show, reps, name: layer.name };
+      }
+      return `${reps} cycles across the ${(show / 1000).toFixed(2)}s show`;
+    }
+    return `stretched to the ${(show / 1000).toFixed(2)}s show`;
+  }
+
+  /** Offer to make the show a whole number of the new layer's cycles. */
+  askAboutCycle() {
+    const c = this.pendingCycle;
+    this.pendingCycle = null;
+    if (!c) return;
+    const fitted = c.cycle * c.reps;
+    const body = el('div', {}, [
+      el('div', { class: 'hint', text:
+        `"${c.name}" repeats every ${c.cycle} ms. The show is ${c.show} ms, which is `
+        + `${(c.show / c.cycle).toFixed(2)} cycles - so the last one is cut off part `
+        + 'way through.' }),
+      el('div', { class: 'hint', text:
+        `Making the show ${fitted} ms would give exactly ${c.reps} whole cycles.` }),
+    ]);
+    showModal('The cycle does not fit the show', body, [
+      button('Leave the show as it is', hideModal),
+      button(`Change the show to ${fitted} ms`, () => {
+        this.pushUndo('show length');
+        this.project.durationMs = fitted;
+        hideModal();
+        this.onProjectEdit({});
+        this.refreshInspector();
+        status(`Show is now ${fitted} ms - ${c.reps} whole cycles.`, 'ok');
+      }, 'primary'),
+    ]);
   }
 
   duplicateLayer() {
@@ -704,6 +799,10 @@ class App {
   }
 
   rebuildHeads() {
+    // The toolbar's show length is derived from the layers when the length is
+    // on auto, so it has to be re-read whenever the layers change - not only
+    // when a setting is edited.
+    this.syncShowQuick();
     this.updateKeyHint();
     const empty = $('#emptyState');
     if (empty) empty.classList.toggle('hidden', this.project.layers.length > 0);
@@ -1499,6 +1598,7 @@ class App {
 
     const body = el('div', { class: 'keys' }, [
       rows('On the playfield', [
+        ['Double-click the path', 'Add a point where you click, on the line'],
         ['Left-drag', 'Move the whole layer - grab the shape, a keyframe, or the path'],
         ['Right-drag a keyframe', 'Move just that one, wherever the playhead is'],
         ['Right-drag the shape', 'Move the keyframe at the playhead, making one if needed'],
@@ -1831,6 +1931,28 @@ class App {
 
     $('#btnRoll').onclick = () => this.randomLayer();
     $('#btnRecenter').onclick = () => this.stage.resetView();
+    $('#btnFitShow').onclick = () => {
+      this.setZoom(1);
+      this.timeline.scrollMs = 0;
+      this.timeline.draw();
+    };
+    $('#quickLength').onchange = (e) => {
+      // Seconds on screen, milliseconds underneath: a show is minutes long and
+      // nobody thinks in five-figure millisecond counts, but every time in the
+      // project is milliseconds and stays that way.
+      const v = Math.max(50, Math.round((Number(e.target.value) || 0) * 1000));
+      this.pushUndo('show length');
+      this.project.durationMs = v;
+      this.onProjectEdit({});
+      this.refreshInspector();
+    };
+    $('#quickFps').onchange = (e) => {
+      const v = Math.max(10, Math.min(60, Math.round(Number(e.target.value) || 30)));
+      this.pushUndo('sample rate');
+      this.project.fps = v;
+      this.onProjectEdit({});
+      this.refreshInspector();
+    };
     $('#emptyDraw').onclick = () => this.startPathDraw();
     $('#drawDone').onclick = () => this.finishPathDraw();
     $('#drawCancel').onclick = () => this.cancelPathDraw();

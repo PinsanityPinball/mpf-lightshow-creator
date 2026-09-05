@@ -220,6 +220,15 @@ main {
   overflow: hidden;
 }
 
+/* Set apart from the settings above it: this changes what the layer IS. */
+/* The two settings that govern everything else, kept where the work happens
+   rather than one tab away. */
+.show-quick input { width: 74px; }
+.show-quick { flex: none; }
+
+.layer-kind { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
+.layer-kind .field > label { color: var(--fg-dim); }
+
 .draw-banner {
   position: absolute;
   top: 8px; left: 50%; transform: translateX(-50%);

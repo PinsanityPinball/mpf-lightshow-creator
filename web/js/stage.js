@@ -2,7 +2,9 @@
 // selection handles, and turns mouse gestures into keyframe edits.
 
 import { shapeExtent } from './shapes.js';
-import { layerStateAtTime, stateAt, invalidateKeys, effectiveParams } from './project.js';
+import {
+  layerStateAtTime, stateAt, invalidateKeys, effectiveParams, makeKey,
+} from './project.js';
 import { status } from './ui.js';
 import { drawLights, colorsToHex } from './render.js';
 
@@ -44,8 +46,14 @@ export class Stage {
     this.hoverLight = -1;
     this.onionCanvas = document.createElement('canvas');
 
-    canvas.addEventListener('dblclick', () => {
-      if (this.app.drawPath) this.app.finishPathDraw();
+    canvas.addEventListener('dblclick', (e) => {
+      if (this.app.drawPath) { this.app.finishPathDraw(); return; }
+      // Double-clicking a path adds a point to it, the same way double-clicking
+      // a clip in the timeline adds a keyframe to that.
+      const layer = this.app.selectedLayer();
+      if (!layer || layer.kind !== 'shape') return;
+      const { x, y } = this.pointer(e);
+      this.insertOnPath(layer, x, y);
     });
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -161,6 +169,11 @@ export class Stage {
 
   hitsLayer(layer, px, py) {
     if (!layer || !layer.enabled || layer.kind !== 'shape') return false;
+    // A layer with no shape draws nothing, so there is nothing there to click.
+    // Without this it still had the bounding box of a default shape, and a
+    // drawn path - which has no shape by design - answered clicks aimed at its
+    // line with "you grabbed the shape".
+    if (layer.shapeId === 'none') return false;
     const st = this.liveState(layer);
     if (!st) return false;
     const ext = shapeExtent(layer.shapeId, effectiveParams(layer, st));
@@ -203,6 +216,15 @@ export class Stage {
     if (this.app.drawPath && (e.button === 0 || e.button === 2)) {
       e.preventDefault();
       const p = this.pointer(e);
+      const drawn = this.app.project.layers.find((l) => l.id === this.app.drawPath.id);
+      // Right places the next point; left picks up one already placed. Without
+      // the split, a click meant to nudge a point you had just put down added
+      // another one on top of it.
+      if (e.button === 0) {
+        const ki = drawn ? this.hitKeyframe(drawn, p.x, p.y) : -1;
+        if (ki >= 0) this.grabKeyframe(drawn, ki, p.x, p.y, false);
+        return;                      // left on empty space does nothing while drawing
+      }
       this.app.addPathPoint(offField(p.x / this.cw), offField(p.y / this.ch));
       return;
     }
@@ -266,31 +288,16 @@ export class Stage {
     // the playhead happened to be sitting on that keyframe it made a brand new
     // one where the playhead was, and the keyframe you clicked never moved.
     if (!wholeLayer && layer) {
-      let ki = this.hitKeyframe(layer, x, y);
-      // A keyframe sitting exactly where the shape is right now cannot be the
-      // one you meant to reach for - there is nothing to distinguish it from
-      // the shape itself. That happens constantly on a large shape, where the
-      // obvious place to click is the middle and the diamonds are all there,
-      // and it made right-click move some other keyframe instead of adding one
-      // at the playhead. Ambiguous means playhead, which is the older gesture.
+      // Point at a keyframe and you move that keyframe. Always, wherever the
+      // playhead is. This used to defer to the playhead when the keyframe sat
+      // under the shape, because right-click was the only way to add one and
+      // the two gestures fought - now adding is double-clicking the path, so
+      // they no longer have to share.
+      const ki = this.hitKeyframe(layer, x, y);
       if (ki >= 0) {
-        const now = this.liveState(layer);
-        if (now && dist(x, y, now.x * this.cw, now.y * this.ch) <= KEY_GRAB) ki = -1;
-      }
-      if (ki >= 0) {
-        const k = layer.keys[ki];
-        app.pushUndo('move keyframe');
-        app.selectKey(ki);
-        // Show the keyframe being edited rather than whatever the playhead was
-        // on, and keep targetKey resolving to the same one.
-        app.setTime(layer.startMs + k.t * Math.max(1, layer.durationMs));
-        this.drag = {
-          mode: 'move', layer, all: false, keyIndex: ki,
-          grabX: x / this.cw - k.x,
-          grabY: y / this.ch - k.y,
-          baseKeys: layer.keys.map((kk) => ({ x: kk.x, y: kk.y })),
-          baseX: k.x, baseY: k.y,
-        };
+        // Move the playhead to the keyframe being edited, so what is on screen
+        // is the thing being changed.
+        this.grabKeyframe(layer, ki, x, y, true);
         return;
       }
     }
@@ -315,6 +322,15 @@ export class Stage {
         baseX: bx, baseY: by,
       };
       return;
+    }
+
+    // Right-clicking the path itself, away from the shape, adds a point there.
+    // Right-click already means "keyframe" everywhere else on the playfield, and
+    // this is the one place where the click says which keyframe without anyone
+    // having to look at the playhead.
+    if (e.button === 2 && layer && !this.hitLayer(x, y)
+        && this.hitPath(layer, x, y)) {
+      if (this.insertOnPath(layer, x, y)) return;
     }
 
     const hit = this.hitLayer(x, y);
@@ -535,7 +551,13 @@ export class Stage {
       ctx.restore();
     }
 
-    if (showShapes) {
+    // While a keyframe is being dragged the shape is drawn on top of the very
+    // thing being placed - and the bigger the shape, the more completely it
+    // hides it. The lights keep showing what the layer is doing, so nothing
+    // about the effect is lost; only the thing in the way goes.
+    const placingKey = !!(this.drag && this.drag.mode === 'move'
+      && this.drag.keyIndex != null);
+    if (showShapes && !placingKey) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = app.view === 'both' ? 0.85 : 1;
@@ -591,6 +613,27 @@ export class Stage {
   }
 
   /**
+   * Start dragging one keyframe. Shared by ordinary editing and by drawing, so
+   * a point behaves the same whether it was just placed or placed last week.
+   */
+  grabKeyframe(layer, ki, x, y, movePlayhead) {
+    const app = this.app;
+    const k = layer.keys[ki];
+    app.pushUndo('move keyframe');
+    app.selectKey(ki);
+    if (movePlayhead) {
+      app.setTime(layer.startMs + k.t * Math.max(1, layer.durationMs));
+    }
+    this.drag = {
+      mode: 'move', layer, all: false, keyIndex: ki,
+      grabX: x / this.cw - k.x,
+      grabY: y / this.ch - k.y,
+      baseKeys: layer.keys.map((kk) => ({ x: kk.x, y: kk.y })),
+      baseX: k.x, baseY: k.y,
+    };
+  }
+
+  /**
    * Which keyframe diamond is under the pointer, or -1.
    *
    * Only the ones drawPaths actually draws: grabbing a marker that is not on
@@ -616,6 +659,71 @@ export class Stage {
    * exactly what you can see - easing included, since the line bunches up where
    * the movement slows and a straight-line test would miss it there.
    */
+  /**
+   * Where along a layer's path the pointer is, as its 0..1 time, or null.
+   *
+   * The same 96 samples the path is drawn from, so the answer is a point that
+   * is genuinely on the line you can see. Returning the time rather than just
+   * "yes" is what lets a click insert a keyframe there: the position and the
+   * moment both come from where you pointed, and neither needs the playhead.
+   */
+  pathTimeAt(layer, x, y) {
+    if (!layer || layer.kind !== 'shape' || layer.keys.length < 2) return null;
+    const steps = 96;
+    let best = null;
+    let px = 0;
+    let py = 0;
+    for (let i = 0; i <= steps; i++) {
+      const st = stateAt(layer, i / steps);
+      const cx = st.x * this.cw;
+      const cy = st.y * this.ch;
+      if (i > 0) {
+        const d = segDist(x, y, px, py, cx, cy);
+        if (d <= PATH_GRAB && (!best || d < best.d)) {
+          // the nearer end of the segment is close enough for a 96-step curve
+          const da = dist(x, y, px, py);
+          const db = dist(x, y, cx, cy);
+          best = { d, u: (da <= db ? i - 1 : i) / steps };
+        }
+      }
+      px = cx;
+      py = cy;
+    }
+    return best ? best.u : null;
+  }
+
+  /**
+   * Add a keyframe where the path was clicked.
+   *
+   * It lands exactly on the existing curve, so adding a point does not move the
+   * layer - it gives you something to grab. That is the whole reason to add one
+   * here rather than at the playhead: you are pointing at the place you mean.
+   */
+  insertOnPath(layer, x, y) {
+    const app = this.app;
+    const u = this.pathTimeAt(layer, x, y);
+    if (u == null) return false;
+    // Already a keyframe there? Select it rather than stacking a second one on
+    // the same moment, which would do nothing and look like a failure.
+    const tol = 1 / 96;
+    const near = layer.keys.findIndex((k) => Math.abs(k.t - u) <= tol);
+    if (near >= 0) {
+      app.selectKey(near);
+      status('There is already a keyframe there.', 'ok');
+      return true;
+    }
+    app.pushUndo('add keyframe');
+    layer.keys.push(makeKey(u, stateAt(layer, u)));
+    layer.keys.sort((a, b) => a.t - b.t);
+    invalidateKeys(layer);
+    app.selectKey(layer.keys.findIndex((k) => Math.abs(k.t - u) <= 1e-9));
+    app.onProjectEdit({});
+    app.refreshInspector();
+    status(`Added a keyframe at ${Math.round(layer.startMs + u * Math.max(1, layer.durationMs))} ms `
+      + '- drag it to bend the path.', 'ok');
+    return true;
+  }
+
   hitPath(layer, x, y) {
     if (!this.app.showPath || !layer || layer.kind !== 'shape') return false;
     if (layer.keys.length < 2) return false;
@@ -659,6 +767,21 @@ export class Stage {
     }
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // Timing dots: evenly spaced in TIME, so their spacing on screen is speed.
+    // Bunched means the layer is crawling there, spread out means it is racing.
+    // This is the one thing the playfield could never say before - you had to
+    // scrub the timeline and watch - and it is why easing was invisible here.
+    if (keys.length > 1) {
+      const DOTS = 24;
+      ctx.fillStyle = 'rgba(143,216,255,0.5)';
+      for (let i = 0; i <= DOTS; i++) {
+        const st = stateAt(layer, i / DOTS);
+        ctx.beginPath();
+        ctx.arc(st.x * this.cw, st.y * this.ch, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     keys.forEach((k, i) => {
       const x = k.x * this.cw, y = k.y * this.ch;

@@ -3,6 +3,7 @@
 
 import {
   projectDuration, invalidateKeys, makeKey, stateAt, layerFireTimes, setLayerStart,
+  msPerFrame,
 } from './project.js';
 import { status } from './ui.js';
 
@@ -119,6 +120,17 @@ export class Timeline {
     this.canvas.setPointerCapture(e.pointerId);
 
     if (y < RULER_H) {
+      // The end marker can be taken hold of here. Only in the ruler: over the
+      // rows it would fight the clips, and the ruler is otherwise just scrubbing.
+      if (Math.abs(x - this.msToX(projectDuration(app.project))) <= EDGE + 2) {
+        app.pushUndo('show length');
+        // The scale is derived from the show length, so dragging the end without
+        // pinning would move the ruler under the pointer and run away from it -
+        // the same servo loop the clip drags had.
+        this.pinScale();
+        this.drag = { mode: 'showend' };
+        return;
+      }
       this.drag = { mode: 'scrub' };
       app.setTime(this.xToMs(x));
       return;
@@ -208,6 +220,10 @@ export class Timeline {
     if (!d) {
       const row = this.rowAt(y);
       let cursor = y < RULER_H ? 'ew-resize' : 'default';
+      if (y < RULER_H
+          && Math.abs(x - this.msToX(projectDuration(app.project))) <= EDGE + 2) {
+        cursor = 'col-resize';
+      }
       if (row >= 0) {
         const layer = app.project.layers[row];
         const rowTop = this.rowY(row);
@@ -218,6 +234,17 @@ export class Timeline {
         else if (x > x0 && x < x1) cursor = 'move';
       }
       this.canvas.style.cursor = cursor;
+      return;
+    }
+
+    if (d.mode === 'showend') {
+      let ms = this.xToMs(x);
+      const step = msPerFrame(app.project);
+      if (!e.altKey) ms = Math.round(ms / step) * step;
+      // Dragging the end is a statement that you want a particular length, so a
+      // show that was following its layers stops doing that and takes this one.
+      app.project.durationMs = Math.max(50, Math.round(ms));
+      app.onProjectEdit({ light: true });
       return;
     }
 
@@ -293,6 +320,13 @@ export class Timeline {
 
   onUp() {
     if (!this.drag) return;
+    if (this.drag.mode === 'showend') {
+      this.drag = null;
+      this.unpinScale();
+      this.app.onProjectEdit({});
+      this.app.refreshInspector();        // the Show tab is showing this number
+      return;
+    }
     if (this.drag.mayReduce && !this.drag.moved) {
       this.app.selectLayer(this.drag.layer.id);
     }
@@ -458,14 +492,32 @@ export class Timeline {
       ctx.fillText(ms >= 1000 ? (ms / 1000).toFixed(step >= 1000 ? 0 : 1) + 's' : ms + 'ms', x + 3, 9);
     }
 
-    // end-of-show marker
+    // End-of-show marker. It was an unlabelled dashed line, which reads as
+    // decoration - naming it is the difference between "what is that?" and
+    // "that is where the show stops".
     const ex = this.msToX(dur);
-    ctx.strokeStyle = 'rgba(255,183,77,0.5)';
+    ctx.strokeStyle = 'rgba(255,183,77,0.55)';
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(ex, 0); ctx.lineTo(ex, this.h);
     ctx.stroke();
     ctx.setLineDash([]);
+    if (ex < this.w - 4) {
+      ctx.fillStyle = 'rgba(255,183,77,0.9)';
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('show ends', ex - 4, 20);
+      ctx.textAlign = 'left';
+    }
+    // A grip in the ruler, so the line reads as a handle rather than as a mark
+    // that happens to be there.
+    ctx.fillStyle = 'rgba(255,183,77,0.95)';
+    ctx.beginPath();
+    ctx.moveTo(ex - 5, 0);
+    ctx.lineTo(ex + 5, 0);
+    ctx.lineTo(ex, 7);
+    ctx.closePath();
+    ctx.fill();
   }
 
   drawRow(layer, index, y) {
