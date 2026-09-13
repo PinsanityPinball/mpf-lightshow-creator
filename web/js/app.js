@@ -888,6 +888,17 @@ class App {
     // A fresh array identity here is what makes every cached light mapping -
     // tag masks and imported-show light indexes - rebuild against the new map.
     this.lights = data.lights;
+    // Said out loud, because the alternative is finding out from MPF refusing
+    // the show - and its error names one light with no hint where it came from.
+    const ghosts = data.notInLightsFile || [];
+    if (ghosts.length) {
+      const list = ghosts.slice(0, 4).join(', ')
+        + (ghosts.length > 4 ? ` and ${ghosts.length - 4} more` : '');
+      status(`${ghosts.length} light${ghosts.length === 1 ? '' : 's'} in the map `
+        + `${ghosts.length === 1 ? 'is' : 'are'} not in your lights file (${list}). `
+        + 'The machine has no such device, so they are left out - MPF refuses a '
+        + 'whole show over one name it does not know.', 'err');
+    }
     this.tags = data.tags || [];
     this.mapMtime = data.mtime || 0;
     this.tagMtime = data.tagMtime || 0;

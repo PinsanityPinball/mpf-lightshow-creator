@@ -1122,9 +1122,25 @@ class Handler(SimpleHTTPRequestHandler):
                 for tag in t:
                     all_tags[tag] = all_tags.get(tag, 0) + 1
 
+            # A monitor.yaml is a drawing of the playfield; the lights file is
+            # the machine's actual device list. A light in the drawing that the
+            # machine does not define cannot be driven - and MPF refuses the
+            # whole show over one such name, so a single stale entry in the map
+            # made every export unloadable. The lights file wins.
+            missing = []
+            if tag_map:
+                known = []
+                for light in lights:
+                    if light["name"] in tag_map:
+                        known.append(light)
+                    else:
+                        missing.append(light["name"])
+                lights = known
+
             return self.send_json({
                 "name": name,
                 "lights": lights,
+                "notInLightsFile": missing,
                 "mtime": file_mtime("lightmaps", name),
                 "tagMtime": file_mtime("lightmaps", tag_file) if tag_file else 0,
                 "tagFile": tag_file or "",
