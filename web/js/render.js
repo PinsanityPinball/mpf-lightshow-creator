@@ -677,7 +677,7 @@ export class ShowRenderer {
    * against the lights array identity; app.js replaces that array whenever the
    * map changes, which invalidates this for free.
    */
-  contagionHops(lights, mask, radius, from) {
+  contagionHops(lights, mask, radius, from, seedTags) {
     if (!CONTAGION_CACHE.has(lights)) CONTAGION_CACHE.set(lights, new Map());
     const perMap = CONTAGION_CACHE.get(lights);
     // the mask matters: a layer aimed at one tag spreads only within it
@@ -687,7 +687,9 @@ export class ShowRenderer {
       for (let i = 0; i < mask.length; i++) if (mask[i]) { n++; h = (h * 31 + i) | 0; }
       maskSig = n + ':' + h;
     }
-    const key = `${radius.toFixed(3)}:${from}:${maskSig}`;
+    const seedSig = (seedTags && seedTags.length)
+      ? seedTags.slice().sort().join('+') : '-';
+    const key = `${radius.toFixed(3)}:${from}:${seedSig}:${maskSig}`;
     const hit = perMap.get(key);
     if (hit) return hit;
 
@@ -706,7 +708,24 @@ export class ShowRenderer {
     const nx = (i) => (lights[i].x - minX) / w;
     const ny = (i) => (lights[i].y - minY) / h;
 
-    // seed: the light furthest towards the chosen edge, or nearest the middle
+    // SEEDS. `seedTags` names the lights the spread starts from -- any
+    // number of them, anywhere on the playfield. Owen wanted a reverse
+    // contagion draining to three specific inserts (upper pf ramp, flip
+    // ramp, suicidal), and an edge or the centre cannot express that.
+    // Without it, the old behaviour: ONE seed, the light furthest towards
+    // the chosen edge or nearest the middle.
+    let seeds = null;
+    if (seedTags && seedTags.length) {
+      const want = new Set(seedTags);
+      seeds = idx.filter((i) => {
+        const l = lights[i];
+        if (l.name && want.has(l.name)) return true;
+        const lt = l.tags || [];
+        for (const t of lt) if (want.has(t)) return true;
+        return false;
+      });
+      if (!seeds.length) seeds = null;   // named nothing present: fall back
+    }
     let seed = idx[0], best = Infinity;
     for (const i of idx) {
       let score;
@@ -744,9 +763,14 @@ export class ShowRenderer {
     // way it would if a light were there.
     let max = 0;
     const spread = (start, from) => {
-      d[start] = from;
+      let queue = [];
+      for (const st of (Array.isArray(start) ? start : [start])) {
+        if (d[st] >= 0) continue;
+        d[st] = from;
+        queue.push(st);
+      }
+      if (!queue.length) return;
       if (from > max) max = from;
-      let queue = [start];
       while (queue.length) {
         const next = [];
         for (const i of queue) {
@@ -760,7 +784,7 @@ export class ShowRenderer {
         queue = next;
       }
     };
-    spread(seed, 0);
+    spread(seeds || seed, 0);
 
     let remaining = idx.filter((i) => d[i] < 0);
     let guard = 0;
@@ -1271,7 +1295,8 @@ export class ShowRenderer {
       const b = targetBounds(layer, lights, mask);
       if (!b.n) return false;
       const hops = this.contagionHops(lights, mask,
-        Math.max(0.02, p.spreadRadius), p.spreadFrom || 'centre');
+        Math.max(0.02, p.spreadRadius), p.spreadFrom || 'centre',
+        p.spreadSeeds);
       // Fit means ONE complete spread across the clip, not a whole number of
       // them: a spread finishes and holds, it does not cycle. Rounding it like
       // a periodic pattern finished the spread halfway through the clip and

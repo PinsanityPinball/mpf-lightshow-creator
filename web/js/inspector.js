@@ -1285,6 +1285,87 @@ export class Inspector {
     input.focus();
   }
 
+  /**
+   * Which lights the spread starts from.
+   *
+   * The engine has always taken a list - names or tags, any number - but there
+   * was no way to say one, so every spread began at whichever light happened to
+   * be nearest an edge or the middle. Picking them by clicking the playfield is
+   * the only sane way in: there are hundreds of lights and you know the three
+   * you mean by where they are, not by what they are called.
+   */
+  /** Is this layer's spread being seeded by clicking the playfield? */
+  isPickingSeeds(layer) {
+    if (!layer || !layer.pattern || layer.pattern.type !== 'contagion') return false;
+    if ((layer.pattern.spreadSeeds || []).length) return true;
+    return !!(this.seedMode && this.seedMode[layer.id]);
+  }
+
+  paneContagionSeeds(root, layer, edit) {
+    const app = this.app;
+    const p = layer.pattern;
+    const seeds = (p.spreadSeeds || []).slice();
+    // One control, not two. This began as a second dropdown next to the old
+    // "Starts at", which put two rival answers to the same question side by
+    // side - and the new one was below the fold, so choosing "lights I choose"
+    // looked like it did nothing. Where the spread begins is one decision.
+    this.seedMode = this.seedMode || {};
+    const picking = seeds.length > 0 || this.seedMode[layer.id] === true;
+
+    root.appendChild(field('Starts at', selectBox(picking ? 'picked' : p.spreadFrom, [
+      ['centre', 'The middle'], ['bottom', 'The bottom'], ['top', 'The top'],
+      ['left', 'The left'], ['right', 'The right'],
+      ['picked', 'Lights I pick on the playfield'],
+    ], (v) => edit('spread from', () => {
+      if (v === 'picked') {
+        this.seedMode[layer.id] = true;
+      } else {
+        this.seedMode[layer.id] = false;
+        p.spreadSeeds = [];
+        p.spreadFrom = v;
+      }
+      this.buildLayer();
+      app.requestDraw();
+    }))));
+
+    if (!picking) return;
+
+    // The picker IS the playfield, so say so loudly rather than as another
+    // grey hint among many - there is no widget here to notice.
+    root.appendChild(el('div', {
+      class: 'seed-call',
+      text: seeds.length
+        ? `Click a light on the playfield to add or remove it. ${seeds.length} chosen.`
+        : 'Now click the lights on the playfield that it should start from.',
+    }));
+    root.appendChild(hint(p.reverse
+      ? 'Reverse is on, so the spread drains back to these - they are where it ends.'
+      : 'It starts at all of them at once and they meet in the middle.'));
+
+    if (seeds.length) {
+      const chips = el('div', { class: 'chips' });
+      for (const nm of seeds) {
+        chips.appendChild(el('button', {
+          class: 'chip on',
+          title: 'Click to remove',
+          onclick: () => edit('spread seeds', () => {
+            p.spreadSeeds = (p.spreadSeeds || []).filter((x) => x !== nm);
+            this.buildLayer();
+            app.requestDraw();
+          }),
+        }, [el('span', { text: nm }), el('i', { text: '\u00d7' })]));
+      }
+      root.appendChild(chips);
+      root.appendChild(el('div', { class: 'btn-row' }, [
+        button('Clear all', () => edit('spread seeds', () => {
+          p.spreadSeeds = [];
+          this.buildLayer();
+          app.requestDraw();
+        }), 'small'),
+      ]));
+    }
+  }
+
   /** Tag picker deciding which lights a layer is allowed to affect. */
   buildTargetUI(layer, edit) {
     const app = this.app;
@@ -1739,10 +1820,7 @@ export class Inspector {
     }
 
     if (p.type === 'contagion') {
-      root.appendChild(field('Starts at', selectBox(p.spreadFrom, [
-        ['centre', 'The middle'], ['bottom', 'The bottom'], ['top', 'The top'],
-        ['left', 'The left'], ['right', 'The right'],
-      ], (v) => edit('spread from', () => { p.spreadFrom = v; this.buildLayer(); }))));
+      this.paneContagionSeeds(root, layer, edit);
       root.appendChild(field('Spread time (ms)', numberInput(p.spreadMs, 100, 60000, 50,
         (v) => edit('spread time', () => {
           p.spreadMs = Math.max(100, Math.round(v));

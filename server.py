@@ -608,6 +608,29 @@ NAMED_COLOURS = {
 }
 
 STEP_LINE = re.compile(r"^-\s*time\s*:\s*(.+?)\s*$")
+# MPF 0.80 shows - including every one this app exports - begin each step with
+# `duration:` rather than `time:`. Matching only `time:` meant our own exports
+# parsed to nothing and imported as an empty layer, without a word of complaint.
+DUR_LINE = re.compile(r"^-\s*duration\s*:\s*(.+?)\s*$")
+
+
+def _duration_ms(text):
+    """One step's duration in ms. A bare number is seconds, as MPF reads it."""
+    v = str(text).strip().strip("'").strip('"').lower()
+    try:
+        if v.endswith("ms"):
+            return max(1, int(round(float(v[:-2]))))
+        if v.endswith("s"):
+            return max(1, int(round(float(v[:-1]) * 1000)))
+        return max(1, int(round(float(v) * 1000)))
+    except ValueError:
+        return 0
+
+
+def _gcd(a, b):
+    while b:
+        a, b = b, a % b
+    return a
 
 
 def _normalise_colour(value, warnings):
@@ -645,11 +668,30 @@ def parse_mpf_show(text):
     section = None        # which block we are inside ('lights' or something else)
     entry_name = None     # light name awaiting nested keys
     index = -1
+    elapsed_ms = 0        # duration-style shows accumulate time instead
+    by_duration = False
 
     for raw in text.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
+            continue
+
+        dm = DUR_LINE.match(stripped)
+        if dm and line.lstrip().startswith("-"):
+            ms = _duration_ms(dm.group(1))
+            if ms <= 0:
+                warnings.append("unreadable step duration %r" % dm.group(1))
+                ms = 1
+            # Kept as elapsed milliseconds for now and turned into frames once
+            # every duration is known: the frame grid depends on all of them, so
+            # it cannot be chosen while reading the first.
+            by_duration = True
+            cur = {"index": elapsed_ms, "lights": {}, "_ms": ms}
+            elapsed_ms += ms
+            steps.append(cur)
+            section = None
+            entry_name = None
             continue
 
         m = STEP_LINE.match(stripped)
@@ -719,11 +761,38 @@ def parse_mpf_show(text):
             seen.add(key)
             light_names.append(key)
 
-    frames = (steps[-1]["index"] + 1) if steps else 0
+    total_ms = 0
+    if by_duration and steps:
+        # The grid is the largest step that divides every duration exactly, so
+        # no step lands between frames and the count stays as small as the show
+        # allows - a show of 33ms steps becomes 33ms frames, not 3,960 of 1ms.
+        grid = 0
+        for st in steps:
+            grid = _gcd(grid, st["_ms"])
+        grid = max(1, grid)
+        # Exports alternate 33ms and 34ms steps to average 30fps, and those two
+        # share no factor - so the exact grid is 1ms and a four second show
+        # becomes 4,000 frames of 306 lights, several megabytes of mostly
+        # repeated colour. Coarsening costs at most half a frame of timing,
+        # which is far below anything visible on a light.
+        CAP = 1200
+        if steps[-1]["index"] + steps[-1]["_ms"] > CAP * grid:
+            grid = max(grid, int(-(-elapsed_ms // CAP)))
+        for st in steps:
+            st["index"] = int(round(st["index"] / grid))
+            del st["_ms"]
+        total_ms = elapsed_ms
+        frames = int(round(total_ms / grid))
+    else:
+        frames = (steps[-1]["index"] + 1) if steps else 0
+
     return {
         "steps": steps,
         "lightNames": light_names,
         "frames": frames,
+        # Only duration-style shows know their real length; a time-indexed one
+        # is frames and nothing else, and 0 means "work it out from the fps".
+        "durationMs": total_ms,
         "warnings": warnings,
     }
 
@@ -1337,8 +1406,33 @@ class Handler(SimpleHTTPRequestHandler):
 
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(content)
+
+            # The editable source, written beside the show it produced.
+            #
+            # A show yaml is colours per light per step: it cannot say that a
+            # layer was a Wave, let alone what its trough was set to. Exporting
+            # without saving the project was therefore a one-way door, and
+            # nothing said so - a show came back as baked frames and the
+            # parameters behind it were simply gone. The two files now travel
+            # together by default.
+            side = None
+            project = body.get("project")
+            if isinstance(project, dict) and project.get("layers") is not None:
+                side_name = re.sub(r"\.(yaml|yml)$", "", name, flags=re.I) + ".json"
+                side_path = os.path.join(base, side_name)
+                if os.path.dirname(os.path.abspath(side_path)) == os.path.abspath(base):
+                    try:
+                        with open(side_path, "w", encoding="utf-8", newline="\n") as fh:
+                            json.dump(project, fh, indent=1)
+                        side = side_path
+                    except OSError as exc:
+                        # The show itself is written; losing the companion is
+                        # worth reporting but not worth failing the export over.
+                        side = "could not be written: %s" % exc
+
             return self.send_json({"ok": True, "name": name, "path": path,
                                    "replaced": existed, "target": target,
+                                   "project": side,
                                    "bytes": len(content.encode("utf-8"))})
 
         if route == "/api/lightmap-import":

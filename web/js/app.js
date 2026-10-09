@@ -749,7 +749,19 @@ class App {
     const layer = this.selectedLayer();
     if (!layer) return;
     this.pushUndo('duplicate layer');
-    const copy = normaliseProject({ layers: [serialiseProject(layer)] }).layers[0];
+    const raw = serialiseProject(layer);
+    // Drop the id so a fresh one is generated. normaliseProject keeps whatever
+    // id it is given - which is right when loading a file, where ids have to
+    // survive - but it meant a duplicate carried the original's id. Everything
+    // finds a layer by id and takes the first match, so the copy was
+    // unreachable: clicking it selected the original, and only the first layer
+    // in the show could be selected at all.
+    delete raw.id;
+    // A pattern's randomness is seeded from seedKey or, failing that, the id.
+    // A new id would therefore reshuffle a copied sparkle or contagion; pinning
+    // the seed to what the original was using keeps the copy looking the same.
+    if (!raw.seedKey) raw.seedKey = layer.seedKey || layer.id;
+    const copy = normaliseProject({ layers: [raw] }).layers[0];
     copy.name = layer.name + ' copy';
     copy.startMs = layer.startMs;
     this.project.layers.push(copy);
@@ -1375,6 +1387,14 @@ class App {
   }
 
   addShowLayer(data) {
+    // A show that parsed to nothing used to import as an empty layer and say
+    // "0 lights, 0 frames" in the same cheerful tone as a success - which is
+    // how an unreadable file looked exactly like a working one.
+    if (!data.frames || !(data.lightNames || []).length) {
+      status(`"${data.name}" has no steps this app can read, so there is nothing `
+        + 'to import. If MPF plays it, that is a gap here worth reporting.', 'err');
+      return;
+    }
     const layer = makeShowLayer(data, this.project.fps, this.lights, this.project.lightMap);
     this.addLayer(layer);
     const names = data.lightNames || [];
@@ -1871,6 +1891,9 @@ class App {
         content: result.yaml,
         target: machineReady ? 'machine' : 'exports',
         overwrite: !!overwrite,
+        // Goes with the show so the two never drift apart: the yaml is what
+        // the machine plays, this is what you edit to change it.
+        project: serialiseProject(this.project),
       });
       if (res.exists && !overwrite) {
         const ok = await confirmModal('File already exists',
@@ -1882,8 +1905,19 @@ class App {
         return write(true);
       }
       hideModal();
+      // The companion is named explicitly, because the whole point of it is
+      // knowing where to go when you want to change the show later.
+      const side = res.project && res.project.startsWith('could not')
+        ? ` - but the editable project ${res.project}`
+        : (res.project ? ` - editable project saved beside it as ${baseName(res.project)}` : '');
       status(`${res.replaced ? 'Replaced' : 'Wrote'} ${res.path} `
-        + `(${(res.bytes / 1024).toFixed(1)} kB)`, 'ok');
+        + `(${(res.bytes / 1024).toFixed(1)} kB)${side}`,
+      res.project && res.project.startsWith('could not') ? 'err' : 'ok');
+      // Opening the show again should find the project, not the baked yaml.
+      if (res.project && !res.project.startsWith('could not')) {
+        this.savedPath = res.project;
+        this.savedName = baseName(res.project);
+      }
     };
 
     const saveBtn = button(machineReady ? 'Save into machine' : 'Save to exports folder',

@@ -837,6 +837,14 @@ export function makePattern(over = {}) {
     // contagion - light spreading light-to-light through the real layout
     spreadMs: 2000,
     spreadFrom: 'centre',  // centre | top | bottom | left | right
+    // Named lights or tags the spread starts from - any number, anywhere. When
+    // this is empty the spread picks one light by the edge above. With Reverse
+    // on, these are where it drains TO, which is how you end on chosen inserts.
+    spreadSeeds: [],
+    // Named lights or tags the spread starts from - any number, anywhere. When
+    // this is empty the spread picks one light by the edge above. With Reverse
+    // on, these are where it drains TO, which is how you end on chosen inserts.
+    spreadSeeds: [],
     spreadRadius: 0.10,    // how close counts as a neighbour, as a fraction of the group
     spreadHold: true,      // lit stays lit, versus a travelling front
     spreadTrail: 0.35,     // width of that front when it does not hold
@@ -1071,7 +1079,13 @@ export function patternTimesAt(layer, timeMs) {
  */
 export function makeShowLayer(data, fps, lights, lightMapName) {
   const frames = Math.max(1, data.frames || 0);
-  const durationMs = Math.round((frames / (fps || 30)) * 1000);
+  // A show that states its own length is believed. Deriving the length from a
+  // frame count and the project's sample rate only works when the two happen
+  // to agree - import a 33ms-per-step show into a 20fps project and it would
+  // play half as fast as it was written.
+  const durationMs = data.durationMs > 0
+    ? Math.round(data.durationMs)
+    : Math.round((frames / (fps || 30)) * 1000);
   const names = data.lightNames || [];
 
   // Where the show's lights physically sit. An MPF show yaml has no positions,
@@ -1215,6 +1229,29 @@ export function showFrameAt(layer, timeMs) {
 // migration / validation of loaded files
 // ---------------------------------------------------------------------------
 
+/**
+ * Make every layer id unique, keeping the first use of each.
+ *
+ * Duplicating a layer used to copy its id as well, so saved shows can already
+ * contain collisions - and a collision makes every layer after the first copy
+ * unselectable, because everything looks a layer up by id and takes the first
+ * match. Repairing on load means an affected file heals itself by being opened.
+ */
+function uniqueIds(layers) {
+  const seen = new Set();
+  let fixed = 0;
+  for (const l of layers) {
+    if (!l.id || seen.has(l.id)) {
+      // keep the original's randomness, which was seeded from the shared id
+      if (!l.seedKey && l.id) l.seedKey = l.id;
+      l.id = nextId();
+      fixed++;
+    }
+    seen.add(l.id);
+  }
+  return fixed;
+}
+
 export function normaliseProject(raw) {
   const p = makeProject(raw || {});
   p.layers = (raw && raw.layers ? raw.layers : []).map((l) => {
@@ -1253,6 +1290,7 @@ export function normaliseProject(raw) {
     if (!('trimEnd' in raw.export)) p.export.trimEnd = legacy;
     delete p.export.trimIdle;
   }
+  uniqueIds(p.layers);
   return p;
 }
 

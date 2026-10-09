@@ -226,6 +226,18 @@ main {
 .show-quick input { width: 74px; }
 .show-quick { flex: none; }
 
+/* Not a hint: an instruction, for a picker whose control surface is the
+   playfield rather than anything in this panel. */
+.seed-call {
+  margin: 6px 0 4px;
+  padding: 6px 9px;
+  border-radius: var(--radius);
+  background: #16303c;
+  border: 1px solid var(--accent);
+  color: #cdefff;
+  font-size: 12px;
+}
+
 .layer-kind { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
 .layer-kind .field > label { color: var(--fg-dim); }
 

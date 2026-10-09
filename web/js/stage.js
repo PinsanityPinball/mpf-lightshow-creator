@@ -391,6 +391,29 @@ export class Stage {
       return;
     }
 
+    // While choosing contagion seeds, a click on a light says "start here"
+    // rather than pinning it for inspection.
+    const seedLayer = app.selectedLayer();
+    if (seedLayer && seedLayer.kind === 'pattern' && seedLayer.pattern
+        && seedLayer.pattern.type === 'contagion'
+        && app.inspector && app.inspector.isPickingSeeds(seedLayer)) {
+      const si = this.nearestLight(x, y);
+      if (si >= 0) {
+        const nm = this.app.lights[si].name;
+        app.pushUndo('spread seeds');
+        const p = seedLayer.pattern;
+        const list = (p.spreadSeeds || []).slice();
+        const at = list.indexOf(nm);
+        if (at >= 0) list.splice(at, 1); else list.push(nm);
+        p.spreadSeeds = list;
+        app.onProjectEdit({});
+        app.refreshInspector();
+        status(list.includes(nm) ? `Spread starts from ${nm} (${list.length} in all)`
+          : `${nm} is no longer a starting light (${list.length} left)`, 'ok');
+        return;
+      }
+    }
+
     // empty space: scrub-select the nearest light for reference, keep selection
     const li = this.nearestLight(x, y);
     if (li >= 0) app.toggleLightPin(li, e.ctrlKey || e.metaKey);
@@ -567,6 +590,7 @@ export class Stage {
 
     if (app.onion) this.drawOnion();
     if (app.showPath) this.drawPaths();
+    this.drawSeedPicks();
 
     if (showLights) {
       drawLights(ctx, app.lights, colors, {
@@ -739,6 +763,32 @@ export class Stage {
       py = cy;
     }
     return false;
+  }
+
+  /**
+   * Ring the lights a contagion starts from.
+   *
+   * The picker is the playfield itself, so without this there is nothing on
+   * screen saying which lights are chosen - the panel lists their names, which
+   * is no help at all when you are looking at the machine.
+   */
+  drawSeedPicks() {
+    const app = this.app;
+    const layer = app.selectedLayer();
+    if (!app.inspector || !app.inspector.isPickingSeeds(layer)) return;
+    const want = new Set(layer.pattern.spreadSeeds || []);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < app.lights.length; i++) {
+      const l = app.lights[i];
+      const chosen = want.has(l.name);
+      ctx.strokeStyle = chosen ? '#ffb74d' : 'rgba(255,183,77,0.18)';
+      ctx.beginPath();
+      ctx.arc(l.x * this.cw, l.y * this.ch, chosen ? 6 : 3.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   drawPaths() {
